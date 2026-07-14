@@ -1,28 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="colorPing">#009966</color>
-    <color name="colorPingRed">#FF0099</color>
-    <color name="colorConfigType">#f97910</color>
+    <color name="colorPing">#008A68</color>
+    <color name="colorPingRed">#C43D4F</color>
+    <color name="colorConfigType">#A96900</color>
     <color name="colorWhite">#FFFFFF</color>
-    <color name="color_fab_active">#f97910</color>
-    <color name="color_fab_inactive">#9C9C9C</color>
-    <color name="divider_color_light">#E0E0E0</color>
+    <color name="color_fab_active">#008A68</color>
+    <color name="color_fab_inactive">#3D5CE1</color>
+    <color name="divider_color_light">#DDE1F0</color>
     <color name="colorIndicator">@color/md_theme_primary</color>
+    <color name="zeus_card_stroke">#C8D0F5</color>
+    <color name="zeus_inner_card">#B8FFFFFF</color>
+    <color name="zeus_status_background">#28FFFFFF</color>
+    <color name="zeus_button_ripple">#66FFFFFF</color>
 
-    <!-- Primary colors - main tone: black -->
-    <color name="md_theme_primary">#000000</color>
+    <!-- ЗимаVPN: electric indigo, lightning gold, calm emerald. -->
+    <color name="md_theme_primary">#2948C7</color>
     <color name="md_theme_onPrimary">#FFFFFF</color>
-    <color name="md_theme_primaryContainer">#E0E0E0</color>
-    <color name="md_theme_onPrimaryContainer">#000000</color>
+    <color name="md_theme_primaryContainer">#E1E6FF</color>
+    <color name="md_theme_onPrimaryContainer">#0C1A59</color>
 
     <!-- Secondary colors - accent color: orange -->
-    <color name="md_theme_secondary">#f97910</color>
+    <color name="md_theme_secondary">#A96900</color>
     <color name="md_theme_onSecondary">#FFFFFF</color>
-    <color name="md_theme_secondaryContainer">#FFE8D6</color>
-    <color name="md_theme_onSecondaryContainer">#2B1700</color>
+    <color name="md_theme_secondaryContainer">#FFDEA6</color>
+    <color name="md_theme_onSecondaryContainer">#281800</color>
 
     <!-- Tertiary colors - accent color: green -->
-    <color name="md_theme_tertiary">#009966</color>
+    <color name="md_theme_tertiary">#008A68</color>
     <color name="md_theme_onTertiary">#FFFFFF</color>
     <color name="md_theme_tertiaryContainer">#A0F2D0</color>
     <color name="md_theme_onTertiaryContainer">#00201A</color>
@@ -34,24 +38,24 @@
     <color name="md_theme_onErrorContainer">#410002</color>
 
     <!-- Background colors -->
-    <color name="md_theme_background">#FFFFFF</color>
-    <color name="md_theme_onBackground">#1C1B1F</color>
+    <color name="md_theme_background">#F8F9FF</color>
+    <color name="md_theme_onBackground">#191B24</color>
 
     <!-- Surface colors -->
-    <color name="md_theme_surface">#FFFFFF</color>
-    <color name="md_theme_onSurface">#1C1B1F</color>
-    <color name="md_theme_surfaceVariant">#E7E0EC</color>
-    <color name="md_theme_onSurfaceVariant">#49454F</color>
+    <color name="md_theme_surface">#F8F9FF</color>
+    <color name="md_theme_onSurface">#191B24</color>
+    <color name="md_theme_surfaceVariant">#E3E5EF</color>
+    <color name="md_theme_onSurfaceVariant">#454650</color>
     <color name="md_theme_inverseSurface">#313033</color>
     <color name="md_theme_inverseOnSurface">#F4EFF4</color>
 
     <!-- Outline colors -->
-    <color name="md_theme_outline">#79747E</color>
-    <color name="md_theme_outlineVariant">#CAC4D0</color>
+    <color name="md_theme_outline">#767680</color>
+    <color name="md_theme_outlineVariant">#C6C6D0</color>
 
     <!-- Other colors -->
-    <color name="md_theme_inversePrimary">#C0C0C0</color>
+    <color name="md_theme_inversePrimary">#BCC6FF</color>
     <color name="md_theme_shadow">#000000</color>
-    <color name="md_theme_surfaceTint">#000000</color>
+    <color name="md_theme_surfaceTint">#2948C7</color>
     <color name="md_theme_scrim">#000000</color>
 </resources>

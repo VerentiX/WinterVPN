@@ -1,12 +1,17 @@
 package com.v2ray.ang
 
+import android.app.ActivityManager
+import android.app.Application
 import android.content.Context
+import android.os.Build
+import android.os.Process
 import androidx.multidex.MultiDexApplication
 import androidx.work.Configuration
 import androidx.work.WorkManager
 import com.tencent.mmkv.MMKV
 import com.v2ray.ang.AppConfig.ANG_PACKAGE
 import com.v2ray.ang.handler.SettingsManager
+import com.v2ray.ang.handler.AppUpdateScheduler
 
 class AngApplication : MultiDexApplication() {
     companion object {
@@ -40,9 +45,24 @@ class AngApplication : MultiDexApplication() {
         // Ensure critical preference defaults are present in MMKV early
         SettingsManager.initApp(this)
         SettingsManager.setNightMode()
+        if (isMainProcess()) {
+            AppUpdateScheduler.schedule(this)
+        }
 
         es.dmoral.toasty.Toasty.Config.getInstance()
             .setGravity(android.view.Gravity.BOTTOM, 0, 300)
             .apply()
+    }
+
+    private fun isMainProcess(): Boolean {
+        val processName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Application.getProcessName()
+        } else {
+            val manager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            manager.runningAppProcesses
+                ?.firstOrNull { it.pid == Process.myPid() }
+                ?.processName
+        }
+        return processName == packageName
     }
 }

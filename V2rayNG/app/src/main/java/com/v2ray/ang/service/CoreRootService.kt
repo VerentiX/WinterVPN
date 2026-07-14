@@ -83,6 +83,12 @@ class CoreRootService : Service(), ServiceControl {
         stopSelf()
     }
 
+    override fun reloadService() {
+        CoroutineScope(Dispatchers.IO).launch {
+            CoreServiceManager.reloadCoreLoop(null)
+        }
+    }
+
     override fun vpnProtect(socket: Int): Boolean = true
 
     override fun onBind(intent: Intent?): IBinder? = null

@@ -5,6 +5,7 @@ import android.content.res.AssetManager
 import android.os.Build
 import android.text.TextUtils
 import androidx.appcompat.app.AppCompatDelegate
+import com.v2ray.ang.AngApplication
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.ANG_PACKAGE
 import com.v2ray.ang.AppConfig.DEFAULT_SUBSCRIPTION_ID
@@ -12,6 +13,7 @@ import com.v2ray.ang.AppConfig.GEOIP_PRIVATE
 import com.v2ray.ang.AppConfig.GEOSITE_PRIVATE
 import com.v2ray.ang.AppConfig.TAG_DIRECT
 import com.v2ray.ang.AppConfig.VPN
+import com.v2ray.ang.R
 import com.v2ray.ang.dto.V2rayConfig
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.dto.entities.RulesetItem
@@ -45,6 +47,7 @@ object SettingsManager {
         //ensureDefaultSubscription()
         initRoutingRulesets(context)
         migrateServerListToSubscriptions()
+        normalizeSubscriptions(context)
         migrateHysteria2PinSHA256()
     }
 
@@ -277,9 +280,52 @@ object SettingsManager {
         }
 
         val defaultSub = SubscriptionItem(
-            remarks = "Default",
+            remarks = AngApplication.application.getString(R.string.subscription_default_name)
         )
         encodeSubscription(DEFAULT_SUBSCRIPTION_ID, defaultSub)
+    }
+
+    /** Removes obsolete empty Default groups and gives legacy groups user-facing names. */
+    private fun normalizeSubscriptions(context: Context) {
+        val subscriptions = MmkvManager.decodeSubscriptions()
+        val hasRegularSubscription = subscriptions.any { it.guid != DEFAULT_SUBSCRIPTION_ID }
+
+        subscriptions.forEach { cache ->
+            val item = cache.subscription
+            if (cache.guid == DEFAULT_SUBSCRIPTION_ID) {
+                val hasProfiles = MmkvManager.decodeServerList(cache.guid).isNotEmpty()
+                if (!hasProfiles && hasRegularSubscription) {
+                    removeSubscription(cache.guid)
+                    return@forEach
+                }
+                val desiredName = if (hasRegularSubscription) {
+                    context.getString(R.string.local_profiles_name)
+                } else {
+                    context.getString(R.string.subscription_default_name)
+                }
+                if (item.remarks.isBlank()
+                    || item.remarks.equals("Default", ignoreCase = true)
+                    || item.remarks.equals("Subscription", ignoreCase = true)
+                ) {
+                    item.remarks = desiredName
+                    encodeSubscription(cache.guid, item)
+                }
+            } else if (item.remarks.isBlank()
+                || item.remarks.equals("import sub", ignoreCase = true)
+                || item.remarks.equals("Subscription", ignoreCase = true)
+            ) {
+                item.remarks = context.getString(R.string.subscription_default_name)
+                encodeSubscription(cache.guid, item)
+            }
+
+            // Upgrade only untouched legacy defaults. Explicit custom intervals and
+            // already enabled subscriptions remain exactly as the user configured them.
+            if (item.url.isNotBlank() && !item.autoUpdate && item.updateInterval == 1440L) {
+                item.autoUpdate = true
+                item.updateInterval = 720L
+                encodeSubscription(cache.guid, item)
+            }
+        }
     }
 
     /**

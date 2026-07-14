@@ -27,7 +27,7 @@ ln -s "$__dir/hev-socks5-tunnel" jni/hev-socks5-tunnel
 #    com.v2ray.ang.service.TProxyService for the VpnService hev tun mode.
 echo 'include $(call all-subdir-makefiles)' > jni/Android.mk
 
-"$NDK_HOME/ndk-build" \
+"$NDK_HOME/ndk-build.cmd" \
     NDK_PROJECT_PATH=. \
     APP_BUILD_SCRIPT=jni/Android.mk \
     "APP_ABI=$ABIS" \
@@ -80,7 +80,7 @@ LOCAL_LDFLAGS += -Wl,-z,common-page-size=16384
 include $(BUILD_EXECUTABLE)
 EXECMK
 
-"$NDK_HOME/ndk-build" \
+"$NDK_HOME/ndk-build.cmd" \
     NDK_PROJECT_PATH=. \
     APP_BUILD_SCRIPT=jni/exec.mk \
     "APP_ABI=$ABIS" \

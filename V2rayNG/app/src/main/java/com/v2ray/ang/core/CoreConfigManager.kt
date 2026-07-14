@@ -3,6 +3,8 @@ package com.v2ray.ang.core
 import android.content.Context
 import android.text.TextUtils
 import com.google.gson.JsonArray
+import com.google.gson.JsonElement
+import com.google.gson.JsonPrimitive
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.ConfigResult
 import com.v2ray.ang.dto.CoreConfigContext
@@ -24,6 +26,16 @@ import com.v2ray.ang.util.Utils
 object CoreConfigManager {
     private var initConfigCache: String? = null
     private var initConfigCacheWithTun: String? = null
+
+    // Compatibility for subscriptions generated for the former Roscom-only databases.
+    // Rewrites happen only in the ephemeral runtime JSON; imported profiles stay untouched.
+    private val geoDataAliases = mapOf(
+        "geosite:category-ads" to "geosite:category-ads-all",
+        "geosite:whitelist" to "geosite:ru-available-only-inside",
+        "geosite:twitch-ads" to "geosite:twitch",
+        "geosite:torrent" to "regexp:(?i).*(torrent|tracker).*",
+        "geoip:direct" to "geoip:ru",
+    )
 
     //region get config function
 
@@ -81,12 +93,14 @@ object CoreConfigManager {
         val context = configContext.context
         val raw = MmkvManager.decodeServerRaw(configContext.guid)
             ?: return ConfigResult(status = false, guid = configContext.guid, errorMessage = "Custom config is empty")
-        val result = ConfigResult(true, configContext.guid, raw)
+        val json = JsonUtil.parseString(raw)?.takeIf { it.isJsonObject }?.asJsonObject
+            ?: return ConfigResult(true, configContext.guid, raw)
+        rewriteGeoDataAliases(json)
+        val compatibleRaw = JsonUtil.toJsonPretty(json) ?: raw
+        val result = ConfigResult(true, configContext.guid, compatibleRaw)
         if (!needTun()) {
             return result
         }
-
-        val json = JsonUtil.parseString(raw)?.takeIf { it.isJsonObject }?.asJsonObject ?: return result
 
         // Check whether package names need to be replaced with UIDs
         if (SettingsManager.canUseProcessRouting()) {
@@ -406,11 +420,45 @@ object CoreConfigManager {
      * Serialize a runtime configuration into a standard result object.
      */
     private fun toConfigResult(configContext: CoreConfigContext, v2rayConfig: V2rayConfig): ConfigResult {
+        val json = JsonUtil.parseString(JsonUtil.toJson(v2rayConfig))
+        if (json != null) rewriteGeoDataAliases(json)
         return ConfigResult(
             status = true,
             guid = configContext.guid,
-            content = JsonUtil.toJsonPretty(v2rayConfig) ?: ""
+            content = JsonUtil.toJsonPretty(json ?: v2rayConfig) ?: ""
         )
+    }
+
+    private fun rewriteGeoDataAliases(element: JsonElement) {
+        when {
+            element.isJsonArray -> {
+                val array = element.asJsonArray
+                for (index in 0 until array.size()) {
+                    val value = array[index]
+                    if (value.isJsonPrimitive && value.asJsonPrimitive.isString) {
+                        geoDataAliases[value.asString.lowercase()]?.let { replacement ->
+                            array.set(index, JsonPrimitive(replacement))
+                        }
+                    } else {
+                        rewriteGeoDataAliases(value)
+                    }
+                }
+            }
+            element.isJsonObject -> {
+                val objectValue = element.asJsonObject
+                objectValue.keySet().toList().forEach { key ->
+                    val value = objectValue.get(key)
+                    if (value.isJsonPrimitive && value.asJsonPrimitive.isString) {
+                        val original = value.asString
+                        geoDataAliases[original.lowercase()]?.let { replacement ->
+                            objectValue.add(key, JsonPrimitive(replacement))
+                        }
+                    } else {
+                        rewriteGeoDataAliases(value)
+                    }
+                }
+            }
+        }
     }
 
     /**

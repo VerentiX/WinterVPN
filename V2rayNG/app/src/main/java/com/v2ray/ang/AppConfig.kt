@@ -45,6 +45,8 @@ object AppConfig {
     const val PREF_FRAGMENT_INTERVAL = "pref_fragment_interval"
     const val PREF_FRAGMENT_MAXSPLIT = "pref_fragment_maxsplit"
     const val SUBSCRIPTION_UPDATE_TASK_NAME = "subscription_updater"
+    const val APP_UPDATE_TASK_NAME = "zimavpn_app_update_v1"
+    const val GEO_BOOTSTRAP_TASK_NAME = "zima_geo_bootstrap_v5"
     const val SUBSCRIPTION_MIN_INTERVAL_MINUTES = 15L
     const val PREF_SPEED_ENABLED = "pref_speed_enabled"
     const val PREF_CONFIRM_REMOVE = "pref_confirm_remove"
@@ -75,6 +77,7 @@ object AppConfig {
     const val PREF_IS_BOOTED = "pref_is_booted"
     const val PREF_CHECK_UPDATE_PRE_RELEASE = "pref_check_update_pre_release"
     const val PREF_GEO_FILES_SOURCES = "pref_geo_files_sources"
+    const val PREF_GEO_BOOTSTRAP_COMPLETE = "pref_zima_geo_bootstrap_complete_v5"
     const val PREF_USE_HEV_TUNNEL = "pref_use_hev_tunnel_v2"
     const val PREF_HEV_TUNNEL_LOGLEVEL = "pref_hev_tunnel_loglevel"
     const val PREF_HEV_TUNNEL_RW_TIMEOUT = "pref_hev_tunnel_rw_timeout_v2"
@@ -119,8 +122,8 @@ object AppConfig {
     const val GITHUB_RAW_URL = "https://raw.githubusercontent.com"
     const val GITHUB_DOWNLOAD_URL = "$GITHUB_URL/%s/releases/latest/download"
     const val ANDROID_PACKAGE_NAME_LIST_URL = "$GITHUB_RAW_URL/2dust/androidpackagenamelist/master/proxy.txt"
-    const val APP_URL = "$GITHUB_URL/2dust/v2rayNG"
-    const val APP_API_URL = "https://api.github.com/repos/2dust/v2rayNG/releases"
+    const val APP_URL = "$GITHUB_URL/VerentiX/WinterVPN"
+    const val APP_API_URL = "https://api.github.com/repos/VerentiX/WinterVPN/releases"
     const val APP_ISSUES_URL = "$APP_URL/issues"
     const val APP_WIKI_MODE = "$APP_URL/wiki/Mode"
     const val APP_PRIVACY_POLICY = "$GITHUB_RAW_URL/2dust/v2rayNG/master/CR.md"
@@ -145,6 +148,13 @@ object AppConfig {
     const val GEOSITE_DAT = "geosite.dat"
     const val GEOIP_DAT = "geoip.dat"
     const val GEOIP_ONLY_CN_PRIVATE_DAT = "geoip-only-cn-private.dat"
+    // Full V2Fly-compatible databases plus Russia-specific lists. Unlike the previous
+    // reduced databases, these contain standard categories such as geosite:google.
+    const val GEO_DATA_BASE_URL = "$GITHUB_RAW_URL/runetfreedom/russia-v2ray-rules-dat/release"
+    const val GEOSITE_DAT_URL = "$GEO_DATA_BASE_URL/$GEOSITE_DAT"
+    const val GEOIP_DAT_URL = "$GEO_DATA_BASE_URL/$GEOIP_DAT"
+    const val GEOSITE_DAT_CHECKSUM_URL = "$GEOSITE_DAT_URL.sha256sum"
+    const val GEOIP_DAT_CHECKSUM_URL = "$GEOIP_DAT_URL.sha256sum"
     const val GEOIP_ONLY_CN_PRIVATE_URL = "$GITHUB_RAW_URL/Loyalsoldier/geoip/release/$GEOIP_ONLY_CN_PRIVATE_DAT"
 
     /** Ports and addresses for various services. */
@@ -166,6 +176,7 @@ object AppConfig {
     const val MSG_STATE_STOP = 4
     const val MSG_STATE_STOP_SUCCESS = 41
     const val MSG_STATE_RESTART = 5
+    const val MSG_STATE_RELOAD = 51
     const val MSG_MEASURE_DELAY = 6
     const val MSG_MEASURE_DELAY_SUCCESS = 61
     const val MSG_MEASURE_CONFIG_START = 7
@@ -175,8 +186,7 @@ object AppConfig {
     const val MSG_MEASURE_CONFIG_FINISH = 74
 
     /** Notification channel IDs and names. */
-    const val RAY_NG_CHANNEL_ID = "RAY_NG_M_CH_ID"
-    const val RAY_NG_CHANNEL_NAME = "v2rayNG Background Service"
+    const val RAY_NG_CHANNEL_ID = "ZIMAVPN_VPN_SERVICE_V4"
 
     /** Protocols Scheme **/
     const val VMESS = "vmess://"
@@ -314,9 +324,7 @@ object AppConfig {
     )
 
     val GEO_FILES_SOURCES = arrayListOf(
-        "Loyalsoldier/v2ray-rules-dat",
-        "runetfreedom/russia-v2ray-rules-dat",
-        "Chocolate4U/Iran-v2ray-rules"
+        "runetfreedom/russia-v2ray-rules-dat"
     )
 
     val BUILTIN_OUTBOUND_TAGS = setOf(

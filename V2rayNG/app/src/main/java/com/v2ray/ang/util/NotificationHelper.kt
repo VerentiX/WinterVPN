@@ -3,6 +3,7 @@ package com.v2ray.ang.util
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.os.Build
@@ -35,11 +36,15 @@ object NotificationHelper {
         channelType: NotificationChannelType,
         context: Context,
         title: String,
-        content: String
+        content: String,
+        contentIntent: PendingIntent? = null
     ) {
         ensureChannelCreated(channelType, context)
         val notificationManager = getNotificationManager(context)
         val builder = buildNotificationBuilder(channelType, context, title, content)
+        if (contentIntent != null) {
+            builder.setContentIntent(contentIntent).setAutoCancel(true)
+        }
         notificationManager.notify(channelType.notificationId, builder.build())
     }
 

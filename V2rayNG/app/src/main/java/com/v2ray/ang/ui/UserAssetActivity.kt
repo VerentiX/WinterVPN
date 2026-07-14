@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.contracts.BaseAdapterListener
+import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.databinding.ActivityUserAssetBinding
 import com.v2ray.ang.dto.entities.AssetUrlItem
 import com.v2ray.ang.extension.toast
@@ -181,6 +182,13 @@ class UserAssetActivity : HelperBaseActivity() {
             withContext(Dispatchers.Main) {
                 if (result.successCount > 0) {
                     toast(getString(R.string.title_update_config_count, result.successCount))
+                    val routingFilesUpdated = listOf(AppConfig.GEOSITE_DAT, AppConfig.GEOIP_DAT)
+                        .none(result.failedAssets::contains)
+                    if (routingFilesUpdated) {
+                        // A running core keeps GeoSite/GeoIP in memory, so apply the new
+                        // databases with the same soft reload used for profile changes.
+                        CoreServiceManager.reloadVService(this@UserAssetActivity)
+                    }
                 } else {
                     toast(getString(R.string.toast_failure))
                 }

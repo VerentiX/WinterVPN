@@ -1,8 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">v2rayNG</string>
-    <string name="app_widget_name">Switch</string>
-    <string name="app_tile_name">Switch</string>
+    <!-- Single branding source: change this value to rename the app everywhere. -->
+    <string name="app_name" translatable="false">ЗимаVPN</string>
+    <string name="title_add_subscription_clipboard">Add subscription from clipboard</string>
+    <string name="subscription_updated_at">Updated: %1$s · %2$d profiles</string>
+    <string name="subscription_never_updated">Not updated yet · %1$d profiles</string>
+    <string name="subscription_auto_update_interval">Auto-update: %1$s</string>
+    <string name="subscription_auto_update_off">Auto-update off</string>
+    <string name="subscription_interval_hours">%1$d h</string>
+    <string name="subscription_interval_minutes">%1$d min</string>
+    <string name="subscription_empty_clipboard">Copy a subscription URL first</string>
+    <string name="subscription_already_exists">This subscription is already added</string>
+    <string name="geo_update_repairing">Geo database error detected. Updating files…</string>
+    <string name="geo_update_waiting">Waiting to update GeoIP/GeoSite…</string>
+    <string name="geo_update_downloading">Updating GeoIP/GeoSite: %1$d%%</string>
+    <string name="geo_update_success">GeoIP/GeoSite updated. Reconnecting…</string>
+    <string name="geo_update_ready">GeoIP/GeoSite files are ready.</string>
+    <string name="geo_update_failed">Could not update GeoIP/GeoSite. It will retry automatically.</string>
+    <string name="vpn_notification_channel_name">%1$s connection</string>
+    <string name="vpn_notification_title">%1$s · %2$s</string>
+    <string name="app_widget_name">ЗимаVPN</string>
+    <string name="app_tile_name">ЗимаVPN</string>
     <string name="app_tile_first_use">First use of this feature, please use the app to add server</string>
     <string name="navigation_drawer_open">Open navigation drawer</string>
     <string name="navigation_drawer_close">Close navigation drawer</string>
@@ -23,6 +41,16 @@
 
     <!--ServerActivity-->
     <string name="title_server">Config</string>
+    <string name="zeus_status_connecting">CONNECTING…</string>
+    <string name="zeus_status_connected">PROTECTED</string>
+    <string name="zeus_status_disconnected">NOT CONNECTED</string>
+    <string name="zeus_profiles_title">Profiles</string>
+    <string name="zeus_choose_profile">Choose a connection</string>
+    <string name="zeus_no_profile">No profile selected</string>
+    <string name="subscription_default_name">Subscription</string>
+    <string name="local_profiles_name">Local profiles</string>
+    <string name="subscription_profile_count">%1$d configurations — tap to expand</string>
+    <string name="subscription_profile_count_expanded">%1$d configurations — tap to collapse</string>
     <string name="menu_item_add_config">Add config</string>
     <string name="menu_item_save_config">Save config</string>
     <string name="menu_item_edit_config">Edit config</string>
@@ -390,6 +418,10 @@
     <string name="update_now">Update now</string>
     <string name="update_check_pre_release">Check Pre-release</string>
     <string name="update_checking_for_update">Checking for update…</string>
+    <string name="update_download_started">Update download started. Android will offer installation when it is ready.</string>
+    <string name="update_install_permission">Allow this app to install updates, then tap Update again.</string>
+    <string name="update_download_complete">Version %1$s is downloaded. Tap to install it.</string>
+    <string name="update_available_notification">A new version %1$s is available. Tap to view the update.</string>
 
     <string name="title_policy_group_type">Policy group type</string>
     <string name="title_policy_group_subscription_id">From subscription group</string>

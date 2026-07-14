@@ -33,6 +33,7 @@ object NotificationManager {
     private const val NOTIFICATION_PENDING_INTENT_RESTART_V2RAY = 2
     private const val NOTIFICATION_ICON_THRESHOLD = 3000
     private const val QUERY_INTERVAL_MS = 3000L
+    private const val IDLE_QUERY_INTERVAL_MS = 15000L
 
     private var lastQueryTime = 0L
     private var mBuilder: NotificationCompat.Builder? = null
@@ -52,7 +53,7 @@ object NotificationManager {
         speedNotificationJob = CoroutineScope(Dispatchers.IO).launch {
             while (isActive) {
                 lastZeroSpeed = updateSpeedNotificationOnce(lastZeroSpeed)
-                delay(QUERY_INTERVAL_MS)
+                delay(if (lastZeroSpeed) IDLE_QUERY_INTERVAL_MS else QUERY_INTERVAL_MS)
             }
         }
     }
@@ -91,10 +92,18 @@ object NotificationManager {
                 ""
             }
 
+        val appName = service.getString(R.string.app_name)
+        val profileName = currentConfig?.remarks.orEmpty()
+        val notificationTitle = if (profileName.isBlank()) {
+            appName
+        } else {
+            service.getString(R.string.vpn_notification_title, appName, profileName)
+        }
+
         mBuilder = NotificationCompat.Builder(service, channelId)
             .setSmallIcon(R.drawable.ic_stat_name)
-            .setContentTitle(currentConfig?.remarks)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setContentTitle(notificationTitle)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .setShowWhen(false)
             .setOnlyAlertOnce(true)
@@ -146,15 +155,24 @@ object NotificationManager {
     @RequiresApi(Build.VERSION_CODES.O)
     private fun createNotificationChannel(): String {
         val channelId = AppConfig.RAY_NG_CHANNEL_ID
-        val channelName = AppConfig.RAY_NG_CHANNEL_NAME
+        val service = getService() ?: return AppConfig.RAY_NG_CHANNEL_ID
+        val channelName = service.getString(
+            R.string.vpn_notification_channel_name,
+            service.getString(R.string.app_name)
+        )
         val chan = NotificationChannel(
             channelId,
-            channelName, NotificationManager.IMPORTANCE_HIGH
+            channelName, NotificationManager.IMPORTANCE_LOW
         )
         chan.lightColor = Color.DKGRAY
-        chan.importance = NotificationManager.IMPORTANCE_NONE
+        chan.importance = NotificationManager.IMPORTANCE_LOW
         chan.lockscreenVisibility = Notification.VISIBILITY_PRIVATE
-        getNotificationManager()?.createNotificationChannel(chan)
+        getNotificationManager()?.apply {
+            deleteNotificationChannel("RAY_NG_M_CH_ID")
+            deleteNotificationChannel("ZEUSGATE_VPN_SERVICE_V2")
+            deleteNotificationChannel("ZETYAVPN_VPN_SERVICE_V3")
+            createNotificationChannel(chan)
+        }
         return channelId
     }
 

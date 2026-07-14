@@ -1,40 +1,40 @@
 package com.v2ray.ang.ui
 
 import android.content.Intent
-import android.content.res.ColorStateList
-import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
+import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.SearchView
-import androidx.core.content.ContextCompat
 import androidx.core.view.GravityCompat
-import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import com.google.android.material.navigation.NavigationView
-import com.google.android.material.tabs.TabLayoutMediator
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.databinding.ActivityMainBinding
-import com.v2ray.ang.enums.EConfigType
+import com.v2ray.ang.dto.entities.SubscriptionCache
 import com.v2ray.ang.enums.PermissionType
 import com.v2ray.ang.extension.toast
 import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.handler.AngConfigManager
+import com.v2ray.ang.handler.GeoAssetUpdater
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsChangeManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.SubscriptionUpdater
-import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import com.v2ray.ang.viewmodel.MainViewModel
 import kotlinx.coroutines.Dispatchers
@@ -48,8 +48,9 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     }
 
     val mainViewModel: MainViewModel by viewModels()
-    private lateinit var groupPagerAdapter: GroupPagerAdapter
-    private var tabMediator: TabLayoutMediator? = null
+    private lateinit var subscriptionCardAdapter: SubscriptionCardAdapter
+    private var geoProgressVisible = false
+    private val geoUpdateStatus by lazy { findViewById<TextView>(R.id.tv_geo_update_status) }
 
     private val requestVpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (it.resultCode == RESULT_OK) {
@@ -69,19 +70,28 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(binding.root)
-        setupToolbar(binding.toolbar, false, getString(R.string.title_server))
+        setupToolbar(binding.toolbar, false, getString(R.string.app_name))
+        setupSnowAnimation()
 
-        // setup viewpager and tablayout
-        groupPagerAdapter = GroupPagerAdapter(this, emptyList())
-        binding.viewPager.adapter = groupPagerAdapter
-        binding.viewPager.isUserInputEnabled = true
+        subscriptionCardAdapter = SubscriptionCardAdapter(object : SubscriptionCardAdapter.Listener {
+            override fun onSelectProfile(guid: String) = selectProfile(guid)
+            override fun onUpdateSubscription(subscription: SubscriptionCache) {
+                updateSubscription(subscription)
+            }
+            override fun onEditSubscription(subscriptionId: String) {
+                requestActivityLauncher.launch(
+                    Intent(this@MainActivity, SubEditActivity::class.java).putExtra("subId", subscriptionId)
+                )
+            }
+        })
+        binding.subscriptionCards.layoutManager = LinearLayoutManager(this)
+        binding.subscriptionCards.adapter = subscriptionCardAdapter
 
         // setup navigation drawer
         setupNavigationDrawer()
 
         binding.fab.setOnClickListener { handleFabAction() }
         binding.layoutTest.setOnClickListener { handleLayoutTestClick() }
-
         setupGroupTab()
         setupViewModel()
         SubscriptionUpdater.sync()
@@ -118,52 +128,110 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
     private fun setupViewModel() {
         mainViewModel.updateTestResultAction.observe(this) { setTestState(it) }
+        mainViewModel.updateListAction.observe(this) {
+            subscriptionCardAdapter.reload()
+            updateConnectButtonAvailability()
+        }
+        mainViewModel.geoDataRepairAction.observe(this) {
+            showGeoUpdateProgress(getString(R.string.geo_update_repairing), 0)
+        }
+        mainViewModel.geoAssetsReadyAction.observe(this) { ready ->
+            if (ready && !geoProgressVisible) {
+                showGeoUpdateProgress(getString(R.string.geo_update_ready), 100)
+                lifecycleScope.launch {
+                    delay(1_200L)
+                    hideGeoUpdateProgress()
+                }
+            }
+        }
         mainViewModel.isRunning.observe(this) { isRunning ->
             applyRunningState(false, isRunning)
         }
         mainViewModel.startListenBroadcast()
         mainViewModel.initAssets(assets)
+        observeGeoAssetUpdates()
+        GeoAssetUpdater.scheduleFirstInstall(this)
+    }
+
+    private fun observeGeoAssetUpdates() {
+        WorkManager.getInstance(this)
+            .getWorkInfosForUniqueWorkLiveData(AppConfig.GEO_BOOTSTRAP_TASK_NAME)
+            .observe(this) { workInfos ->
+                val visibleWork = workInfos.filter {
+                    it.tags.contains(GeoAssetUpdater.VISIBLE_PROGRESS_TAG)
+                }
+                val info = visibleWork.firstOrNull { !it.state.isFinished } ?: visibleWork.lastOrNull()
+                    ?: return@observe
+                if (info.state.isFinished && !geoProgressVisible) return@observe
+                when (info.state) {
+                    WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
+                        showGeoUpdateProgress(getString(R.string.geo_update_waiting), null)
+                    }
+                    WorkInfo.State.RUNNING -> {
+                        val percent = info.progress.getInt(GeoAssetUpdater.PROGRESS_PERCENT, 0)
+                        showGeoUpdateProgress(getString(R.string.geo_update_downloading, percent), percent)
+                    }
+                    WorkInfo.State.SUCCEEDED -> {
+                        val successMessage = if (
+                            info.outputData.getBoolean(GeoAssetUpdater.INPUT_RECONNECT, false)
+                        ) {
+                            getString(R.string.geo_update_success)
+                        } else {
+                            getString(R.string.geo_update_ready)
+                        }
+                        showGeoUpdateProgress(successMessage, 100)
+                        lifecycleScope.launch {
+                            delay(1_200L)
+                            hideGeoUpdateProgress()
+                        }
+                    }
+                    WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> if (geoProgressVisible) {
+                        geoUpdateStatus.text = getString(R.string.geo_update_failed)
+                        lifecycleScope.launch {
+                            delay(4_000L)
+                            hideGeoUpdateProgress()
+                        }
+                    }
+                }
+            }
+    }
+
+    private fun showGeoUpdateProgress(message: String, percent: Int?) {
+        geoProgressVisible = true
+        binding.progressBar.isIndeterminate = percent == null
+        if (percent != null) {
+            binding.progressBar.setProgressCompat(percent.coerceIn(0, 100), true)
+        }
+        binding.progressBar.visibility = View.VISIBLE
+        geoUpdateStatus.text = message
+        geoUpdateStatus.visibility = View.VISIBLE
+    }
+
+    private fun hideGeoUpdateProgress() {
+        if (!geoProgressVisible) return
+        geoProgressVisible = false
+        binding.progressBar.visibility = View.INVISIBLE
+        binding.progressBar.isIndeterminate = true
+        binding.progressBar.progress = 0
+        geoUpdateStatus.visibility = View.GONE
     }
 
     private fun setupGroupTab() {
-        val groups = mainViewModel.getSubscriptions(this)
-        groupPagerAdapter.update(groups)
-
-        tabMediator?.detach()
-        tabMediator = TabLayoutMediator(binding.tabGroup, binding.viewPager) { tab, position ->
-            groupPagerAdapter.groups.getOrNull(position)?.let {
-                tab.text = it.remarks
-                tab.tag = it.id
-            }
-        }.also { it.attach() }
-
-        val targetIndex = groups.indexOfFirst { it.id == mainViewModel.subscriptionId }.takeIf { it >= 0 } ?: (groups.size - 1)
-        binding.viewPager.setCurrentItem(targetIndex, false)
-
-        binding.tabGroup.isVisible = groups.size > 1
-        refreshGroupTabTitles(true)
+        if (mainViewModel.subscriptionId.isNotEmpty()) {
+            mainViewModel.subscriptionIdChanged("")
+        }
+        subscriptionCardAdapter.reload()
     }
 
-    fun refreshGroupTabTitles(refreshAll: Boolean = false) {
-        val groupsToRefresh = if (refreshAll || mainViewModel.subscriptionId.isEmpty()) {
-            groupPagerAdapter.groups
-        } else {
-            groupPagerAdapter.groups.filter { it.id == mainViewModel.subscriptionId }
-        }
-
-        groupsToRefresh.forEach { group ->
-            if (group.id.isEmpty()) {
-                return@forEach
-            }
-            val tabIndex = groupPagerAdapter.groups.indexOfFirst { it.id == group.id }
-            if (tabIndex >= 0) {
-                val count = MmkvManager.decodeServerList(group.id).size
-                binding.tabGroup.getTabAt(tabIndex)?.text = "${group.remarks} ($count)"
-            }
-        }
+    fun refreshGroupTabTitles() {
+        subscriptionCardAdapter.reload()
     }
 
     private fun handleFabAction() {
+        if (mainViewModel.isRunning.value != true && !hasSelectedProfile()) {
+            updateConnectButtonAvailability()
+            return
+        }
         applyRunningState(isLoading = true, isRunning = false)
 
         if (mainViewModel.isRunning.value == true) {
@@ -190,8 +258,8 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     }
 
     private fun startV2Ray() {
-        if (MmkvManager.getSelectServer().isNullOrEmpty()) {
-            toast(R.string.title_file_chooser)
+        if (!hasSelectedProfile()) {
+            updateConnectButtonAvailability()
             return
         }
 
@@ -204,10 +272,16 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
     fun restartV2Ray() {
         if (mainViewModel.isRunning.value == true) {
-            CoreServiceManager.stopVService(this)
+            CoreServiceManager.restartVService(this)
+        } else {
+            startV2Ray()
         }
-        lifecycleScope.launch {
-            delay(500)
+    }
+
+    fun reloadV2Ray() {
+        if (mainViewModel.isRunning.value == true) {
+            CoreServiceManager.reloadVService(this)
+        } else {
             startV2Ray()
         }
     }
@@ -216,29 +290,104 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         binding.tvTestState.text = content
     }
 
+    private fun setupSnowAnimation() {
+        binding.animationSnow.addLottieOnCompositionLoadedListener {
+            if (mainViewModel.isRunning.value == true) {
+                setSnowAnimationEnabled(true)
+            }
+        }
+    }
+
+    private fun setSnowAnimationEnabled(enabled: Boolean) {
+        binding.animationSnow.apply {
+            if (enabled) {
+                visibility = View.VISIBLE
+                alpha = 0.7f
+                if (!isAnimating) {
+                    playAnimation()
+                }
+            } else {
+                cancelAnimation()
+                visibility = View.GONE
+            }
+        }
+    }
+
     private fun applyRunningState(isLoading: Boolean, isRunning: Boolean) {
         if (isLoading) {
-            binding.fab.setImageResource(R.drawable.ic_fab_check)
+            binding.fab.isEnabled = false
+            binding.ivFabIcon.setImageResource(R.drawable.ic_fab_check)
+            binding.fab.clearAnimation()
             return
         }
 
+        refreshSelectedProfile()
+        updateConnectButtonAvailability(isRunning)
+
         if (isRunning) {
-            binding.fab.setImageResource(R.drawable.ic_stop_24dp)
-            binding.fab.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.color_fab_active))
+            binding.ivFabIcon.setImageResource(R.drawable.ic_stop_24dp)
+            binding.fab.setBackgroundResource(R.drawable.bg_power_btn_active)
+
+            // Запуск анимации пульсации кнопки
+            val pulseAnimation = android.view.animation.ScaleAnimation(
+                1.0f, 1.04f, 1.0f, 1.04f,
+                android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f,
+                android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f
+            ).apply {
+                duration = 1500
+                repeatCount = android.view.animation.Animation.INFINITE
+                repeatMode = android.view.animation.Animation.REVERSE
+                interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+            }
+            binding.fab.startAnimation(pulseAnimation)
+
+            // ВКЛЮЧАЕМ АНИМАЦИЮ СНЕГА
+            setSnowAnimationEnabled(true)
+
             binding.fab.contentDescription = getString(R.string.action_stop_service)
             setTestState(getString(R.string.connection_connected))
             binding.layoutTest.isFocusable = true
         } else {
-            binding.fab.setImageResource(R.drawable.ic_play_24dp)
-            binding.fab.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.color_fab_inactive))
+            binding.ivFabIcon.setImageResource(R.drawable.ic_play_24dp)
+            binding.fab.setBackgroundResource(R.drawable.bg_power_btn_inactive)
+            binding.fab.clearAnimation()
+
+            // ВЫКЛЮЧАЕМ АНИМАЦИЮ СНЕГА
+            setSnowAnimationEnabled(false)
+
             binding.fab.contentDescription = getString(R.string.tasker_start_service)
             setTestState(getString(R.string.connection_not_connected))
             binding.layoutTest.isFocusable = false
         }
     }
 
+    private fun hasSelectedProfile(): Boolean {
+        val guid = MmkvManager.getSelectServer() ?: return false
+        return MmkvManager.decodeAllServerList().contains(guid) &&
+            MmkvManager.decodeServerConfig(guid) != null
+    }
+
+    private fun updateConnectButtonAvailability(
+        isRunning: Boolean = mainViewModel.isRunning.value == true
+    ) {
+        val enabled = isRunning || hasSelectedProfile()
+        binding.fab.isEnabled = enabled
+        binding.fab.isClickable = enabled
+        binding.fab.alpha = if (enabled) 1f else 0.42f
+    }
+    fun refreshSelectedProfile() {
+        val profileName = MmkvManager.getSelectServer()
+            ?.let(MmkvManager::decodeServerConfig)
+            ?.remarks
+            ?.takeIf { it.isNotBlank() }
+        binding.tvSelectedProfile.text = profileName ?: getString(R.string.zeus_no_profile)
+    }
+
     override fun onResume() {
         super.onResume()
+        refreshSelectedProfile()
+        updateConnectButtonAvailability()
+        if (::subscriptionCardAdapter.isInitialized) subscriptionCardAdapter.reload()
     }
 
     override fun onPause() {
@@ -256,12 +405,14 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
                 override fun onQueryTextChange(newText: String?): Boolean {
                     mainViewModel.filterConfig(newText.orEmpty())
+                    subscriptionCardAdapter.reload(newText.orEmpty())
                     return false
                 }
             })
 
             searchView.setOnCloseListener {
                 mainViewModel.filterConfig("")
+                subscriptionCardAdapter.reload("")
                 false
             }
         }
@@ -269,68 +420,8 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     }
 
     override fun onOptionsItemSelected(item: MenuItem) = when (item.itemId) {
-        R.id.import_qrcode -> {
-            importQRcode()
-            true
-        }
-
-        R.id.import_clipboard -> {
-            importClipboard()
-            true
-        }
-
-        R.id.import_local -> {
-            importConfigLocal()
-            true
-        }
-
-        R.id.import_manually_policy_group -> {
-            importManually(EConfigType.POLICYGROUP.value)
-            true
-        }
-
-        R.id.import_manually_proxy_chain -> {
-            importManually(EConfigType.PROXYCHAIN.value)
-            true
-        }
-
-        R.id.import_manually_vmess -> {
-            importManually(EConfigType.VMESS.value)
-            true
-        }
-
-        R.id.import_manually_vless -> {
-            importManually(EConfigType.VLESS.value)
-            true
-        }
-
-        R.id.import_manually_ss -> {
-            importManually(EConfigType.SHADOWSOCKS.value)
-            true
-        }
-
-        R.id.import_manually_socks -> {
-            importManually(EConfigType.SOCKS.value)
-            true
-        }
-
-        R.id.import_manually_http -> {
-            importManually(EConfigType.HTTP.value)
-            true
-        }
-
-        R.id.import_manually_trojan -> {
-            importManually(EConfigType.TROJAN.value)
-            true
-        }
-
-        R.id.import_manually_wireguard -> {
-            importManually(EConfigType.WIREGUARD.value)
-            true
-        }
-
-        R.id.import_manually_hysteria2 -> {
-            importManually(EConfigType.HYSTERIA2.value)
+        R.id.add_subscription_clipboard -> {
+            addSubscriptionFromClipboard()
             true
         }
 
@@ -383,99 +474,64 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         else -> super.onOptionsItemSelected(item)
     }
 
-    private fun importManually(createConfigType: Int) {
-        if (createConfigType == EConfigType.POLICYGROUP.value) {
-            startActivity(
-                Intent()
-                    .putExtra("subscriptionId", mainViewModel.subscriptionId)
-                    .setClass(this, ServerGroupActivity::class.java)
-            )
-        } else if (createConfigType == EConfigType.PROXYCHAIN.value) {
-            startActivity(
-                Intent()
-                    .putExtra("subscriptionId", mainViewModel.subscriptionId)
-                    .setClass(this, ServerProxyChainActivity::class.java)
-            )
-        } else {
-            startActivity(
-                Intent()
-                    .putExtra("createConfigType", createConfigType)
-                    .putExtra("subscriptionId", mainViewModel.subscriptionId)
-                    .setClass(this, ServerActivity::class.java)
-            )
+    private fun addSubscriptionFromClipboard() {
+        val clipboard = runCatching { Utils.getClipboard(this) }.getOrNull()
+            ?.trim()?.lineSequence()?.firstOrNull()?.trim()
+        if (!Utils.isValidSubUrl(clipboard)) {
+            toastError(R.string.subscription_empty_clipboard)
+            return
         }
-    }
-
-    /**
-     * import config from qrcode
-     */
-    private fun importQRcode(): Boolean {
-        launchQRCodeScanner { scanResult ->
-            if (scanResult != null) {
-                importBatchConfig(scanResult)
-            }
+        if (MmkvManager.decodeSubscriptions().any { it.subscription.url == clipboard }) {
+            toast(R.string.subscription_already_exists)
+            return
         }
-        return true
-    }
 
-    /**
-     * import config from clipboard
-     */
-    private fun importClipboard()
-            : Boolean {
-        try {
-            val clipboard = Utils.getClipboard(this)
-            importBatchConfig(clipboard)
-        } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "Failed to import config from clipboard", e)
-            return false
-        }
-        return true
-    }
-
-    private fun importBatchConfig(server: String?) {
         showLoading()
-
         lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val (count, countSub) = AngConfigManager.importBatchConfig(server, mainViewModel.subscriptionId, true)
-                delay(500L)
-                withContext(Dispatchers.Main) {
-                    when {
-                        count > 0 -> {
-                            toast(getString(R.string.title_import_config_count, count))
-                            mainViewModel.reloadServerList()
-                            refreshGroupTabTitles()
-                        }
-
-                        countSub > 0 -> setupGroupTab()
-                        else -> toastError(R.string.toast_failure)
-                    }
-                    hideLoading()
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
+            val subscription = runCatching { AngConfigManager.addSubscription(clipboard) }.getOrNull()
+            val result = subscription?.let { AngConfigManager.updateConfigViaSub(it) }
+            subscription?.let { SubscriptionUpdater.syncOne(subId = it.guid) }
+            withContext(Dispatchers.Main) {
+                if (subscription == null) {
                     toastError(R.string.toast_failure)
-                    hideLoading()
+                } else if (result != null && result.successCount > 0) {
+                    toast(getString(R.string.title_update_config_count, result.configCount))
+                } else {
+                    toastError(R.string.toast_failure)
                 }
-                LogUtil.e(AppConfig.TAG, "Failed to import batch config", e)
+                mainViewModel.reloadServerList()
+                setupGroupTab()
+                hideLoading()
             }
         }
     }
 
-    /**
-     * import config from local config file
-     */
-    private fun importConfigLocal(): Boolean {
-        try {
-            showFileChooser()
-        } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "Failed to import config from local file", e)
-            return false
+    private fun updateSubscription(subscription: SubscriptionCache) {
+        showLoading()
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = AngConfigManager.updateConfigViaSub(subscription)
+            SubscriptionUpdater.syncOne(subId = subscription.guid)
+            withContext(Dispatchers.Main) {
+                if (result.successCount > 0) {
+                    toast(getString(R.string.title_update_config_count, result.configCount))
+                } else {
+                    toastError(R.string.toast_failure)
+                }
+                mainViewModel.reloadServerList()
+                subscriptionCardAdapter.reload()
+                hideLoading()
+            }
         }
-        return true
     }
 
+    private fun selectProfile(guid: String) {
+        if (MmkvManager.getSelectServer() == guid) return
+        MmkvManager.setSelectServer(guid)
+        refreshSelectedProfile()
+        updateConnectButtonAvailability()
+        subscriptionCardAdapter.reload()
+        if (mainViewModel.isRunning.value == true) reloadV2Ray()
+    }
 
     /**
      * import config from sub
@@ -595,32 +651,6 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     }
 
     /**
-     * show file chooser
-     */
-    private fun showFileChooser() {
-        launchFileChooser { uri ->
-            if (uri == null) {
-                return@launchFileChooser
-            }
-
-            readContentFromUri(uri)
-        }
-    }
-
-    /**
-     * read content from uri
-     */
-    private fun readContentFromUri(uri: Uri) {
-        try {
-            contentResolver.openInputStream(uri).use { input ->
-                importBatchConfig(input?.bufferedReader()?.readText())
-            }
-        } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "Failed to read content from URI", e)
-        }
-    }
-
-    /**
      * Locates and scrolls to the currently selected server.
      * If the selected server is in a different group, automatically switches to that group first.
      */
@@ -631,34 +661,12 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
             return
         }
 
-        val targetGroupIndex = groupPagerAdapter.groups.indexOfFirst { it.id == targetSubscriptionId }
+        val targetGroupIndex = subscriptionCardAdapter.revealSubscription(targetSubscriptionId)
         if (targetGroupIndex < 0) {
             toast(R.string.toast_server_not_found_in_group)
             return
         }
-
-        // Switch to target group if needed, then scroll to the server
-        if (binding.viewPager.currentItem != targetGroupIndex) {
-            binding.viewPager.setCurrentItem(targetGroupIndex, true)
-            binding.viewPager.postDelayed({ scrollToSelectedServer(targetGroupIndex) }, 1000)
-        } else {
-            scrollToSelectedServer(targetGroupIndex)
-        }
-    }
-
-    /**
-     * Scrolls to the selected server in the specified fragment.
-     * @param groupIndex The index of the group/fragment to scroll in
-     */
-    private fun scrollToSelectedServer(groupIndex: Int) {
-        val itemId = groupPagerAdapter.getItemId(groupIndex)
-        val fragment = supportFragmentManager.findFragmentByTag("f$itemId") as? GroupServerFragment
-
-        if (fragment?.isAdded == true && fragment.view != null) {
-            fragment.scrollToSelectedServer()
-        } else {
-            toast(R.string.toast_fragment_not_available)
-        }
+        binding.subscriptionCards.smoothScrollToPosition(targetGroupIndex)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -689,8 +697,4 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         return true
     }
 
-    override fun onDestroy() {
-        tabMediator?.detach()
-        super.onDestroy()
-    }
 }

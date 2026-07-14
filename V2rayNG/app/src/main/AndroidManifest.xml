@@ -40,6 +40,9 @@
     <!-- <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:ignore="RequestInstallPackagesPolicy" />
 
     <application
         android:name=".AngApplication"
@@ -250,7 +253,7 @@
             android:exported="true"
             android:foregroundServiceType="specialUse"
             android:icon="@drawable/ic_stat_name"
-            android:label="@string/app_tile_name"
+            android:label="@string/app_name"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
             android:process=":RunSoLibV2RayDaemon">
             <intent-filter>
@@ -297,6 +300,29 @@
             android:name="androidx.work.multiprocess.RemoteWorkManagerService"
             android:exported="false"
             android:process=":bg" />
+
+        <!-- All schedulers and workers must agree on one process. Without this override,
+             SystemJobService races RemoteWorkManager and discards live progress updates. -->
+        <service
+            android:name="androidx.work.impl.background.systemjob.SystemJobService"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:process=":bg"
+            tools:node="merge" />
+
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:exported="false"
+            android:process=":bg"
+            tools:node="merge" />
+
+        <receiver
+            android:name=".receiver.AppUpdateDownloadReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"

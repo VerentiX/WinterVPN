@@ -1,8 +1,21 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     id("com.jaredsburrows.license")
 }
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.isFile) {
+        localPropertiesFile.inputStream().use { load(it) }
+    }
+}
+val githubReleasesToken = "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"
+val escapedGithubReleasesToken = githubReleasesToken
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
 
 android {
     namespace = "com.v2ray.ang"
@@ -12,9 +25,16 @@ android {
         applicationId = "com.v2ray.ang"
         minSdk = 24
         targetSdk = 37
-        versionCode = 736
-        versionName = "2.2.6"
+        // 10000 = 1.0.0. Keep increasing this value for every published APK.
+        // It is intentionally above the old v2rayNG code so Android accepts the rebrand as an update.
+        versionCode = 10001
+        versionName = "1.0.1"
         multiDexEnabled = true
+        buildConfigField(
+            "String",
+            "GITHUB_RELEASES_TOKEN",
+            "\"$escapedGithubReleasesToken\""
+        )
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {
@@ -92,7 +112,7 @@ android {
                 .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
                 .forEach { output ->
                     val abi = output.getFilter("ABI") ?: "universal"
-                    output.outputFileName = "v2rayNG_${variant.versionName}-fdroid_${abi}.apk"
+                    output.outputFileName = "ЗимаVPN_${variant.versionName}-fdroid_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (100 * variant.versionCode + versionCodes[abi]!!).plus(5000000)
@@ -112,7 +132,7 @@ android {
                     else
                         "universal"
 
-                    output.outputFileName = "v2rayNG_${variant.versionName}_${abi}.apk"
+                    output.outputFileName = "ЗимаVPN_${variant.versionName}_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (1000000 * versionCodes[abi]!!).plus(variant.versionCode)
@@ -139,6 +159,8 @@ android {
 dependencies {
     // Core Libraries
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+
+    implementation("com.airbnb.android:lottie:6.7.1")
 
     // AndroidX Core Libraries
     implementation(libs.androidx.core.ktx)

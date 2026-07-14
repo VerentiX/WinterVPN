@@ -116,6 +116,7 @@ object HttpUtil {
             .url(url)
             .get()
             .header("Connection", "close")
+        applyRequestHeaders(request.headers, requestBuilder)
         if (request.httpPort != 0 && !request.proxyUsername.isNullOrBlank() && !request.proxyPassword.isNullOrBlank()) {
             requestBuilder.header("Proxy-Authorization", Credentials.basic(request.proxyUsername, request.proxyPassword))
         }
@@ -152,7 +153,7 @@ object HttpUtil {
             if (currentUrl == null) continue
             val client = buildOkHttpClient(request.timeout, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = false)
             val finalUserAgent = if (request.userAgent.isNullOrBlank()) {
-                "v2rayNG/${BuildConfig.VERSION_NAME}"
+                "ZimaVPN/${BuildConfig.VERSION_NAME}"
             } else {
                 request.userAgent
             }
@@ -163,6 +164,7 @@ object HttpUtil {
                 .header("Connection", "close")
 
             applyEmbeddedBasicAuthHeader(currentUrl, requestBuilder)
+            applyRequestHeaders(request.headers, requestBuilder)
 
             if (request.httpPort != 0 && !request.proxyUsername.isNullOrBlank() && !request.proxyPassword.isNullOrBlank()) {
                 requestBuilder.header("Proxy-Authorization", Credentials.basic(request.proxyUsername, request.proxyPassword))
@@ -206,6 +208,14 @@ object HttpUtil {
                 Utils.decodeURIComponent(if (colon >= 0) userInfo.substring(colon + 1) else "")
             }.getOrDefault(if (colon >= 0) userInfo.substring(colon + 1) else "")
             requestBuilder.header("Authorization", Credentials.basic(user, pass))
+        }
+    }
+
+    private fun applyRequestHeaders(headers: Map<String, String>, requestBuilder: Request.Builder) {
+        headers.forEach { (name, value) ->
+            if (name.isNotBlank() && value.isNotBlank()) {
+                requestBuilder.header(name, value)
+            }
         }
     }
 
@@ -261,7 +271,8 @@ object HttpUtil {
 
     fun downloadToFile(
         request: UrlContentRequest,
-        targetFile: File
+        targetFile: File,
+        onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null
     ): Boolean {
         val url = request.url ?: return false
         val client = buildOkHttpClient(request.timeout, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = true)
@@ -269,6 +280,7 @@ object HttpUtil {
             .url(url)
             .get()
             .header("Connection", "close")
+        applyRequestHeaders(request.headers, requestBuilder)
         if (request.httpPort != 0 && !request.proxyUsername.isNullOrBlank() && !request.proxyPassword.isNullOrBlank()) {
             requestBuilder.header("Proxy-Authorization", Credentials.basic(request.proxyUsername, request.proxyPassword))
         }
@@ -280,9 +292,18 @@ object HttpUtil {
                     return false
                 }
                 val body = response.body ?: return false
+                val totalBytes = body.contentLength()
                 body.byteStream().use { input ->
                     targetFile.outputStream().use { output ->
-                        input.copyTo(output)
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var downloadedBytes = 0L
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read <= 0) break
+                            output.write(buffer, 0, read)
+                            downloadedBytes += read
+                            onProgress?.invoke(downloadedBytes, totalBytes)
+                        }
                     }
                 }
                 true

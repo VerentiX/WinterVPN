@@ -241,9 +241,10 @@ class GroupServerFragment : BaseFragment<FragmentGroupServerBinding>(),
             val fromPosition = mainViewModel.getPosition(selected.orEmpty())
             val toPosition = mainViewModel.getPosition(guid)
             adapter.setSelectServer(fromPosition, toPosition)
+            ownerActivity.refreshSelectedProfile()
 
             if (mainViewModel.isRunning.value == true) {
-                ownerActivity.restartV2Ray()
+                ownerActivity.reloadV2Ray()
             }
         }
     }

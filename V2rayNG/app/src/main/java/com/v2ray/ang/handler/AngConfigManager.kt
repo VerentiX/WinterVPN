@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.text.TextUtils
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.AngApplication
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreConfigManager
 import com.v2ray.ang.dto.SubscriptionUpdateResult
@@ -631,18 +632,31 @@ object AngConfigManager {
      * @return The number of subscriptions imported.
      */
     private fun importUrlAsSubscription(url: String): Int {
+        return if (addSubscription(url) != null) 1 else 0
+    }
+
+    /** Adds exactly one subscription URL and returns it without importing arbitrary profile text. */
+    fun addSubscription(url: String?): SubscriptionCache? {
+        val normalizedUrl = url?.trim()?.lineSequence()?.firstOrNull()?.trim()
+            ?.takeIf(Utils::isValidSubUrl) ?: return null
         val subscriptions = MmkvManager.decodeSubscriptions()
         subscriptions.forEach {
-            if (it.subscription.url == url) {
-                return 0
+            if (it.subscription.url == normalizedUrl) {
+                return null
             }
         }
-        val uri = URI(Utils.fixIllegalUrl(url))
+        val uri = URI(Utils.fixIllegalUrl(normalizedUrl))
         val subItem = SubscriptionItem()
-        subItem.remarks = uri.fragment ?: "import sub"
-        subItem.url = url
-        MmkvManager.encodeSubscription("", subItem)
-        return 1
+        subItem.remarks = uri.fragment?.takeIf { it.isNotBlank() }
+            ?: AngApplication.application.getString(R.string.subscription_default_name)
+        subItem.url = normalizedUrl
+        if (MmkvManager.decodeSubscription(AppConfig.DEFAULT_SUBSCRIPTION_ID) != null
+            && MmkvManager.decodeServerList(AppConfig.DEFAULT_SUBSCRIPTION_ID).isEmpty()
+        ) {
+            MmkvManager.removeSubscription(AppConfig.DEFAULT_SUBSCRIPTION_ID)
+        }
+        val guid = MmkvManager.encodeSubscription("", subItem)
+        return SubscriptionCache(guid, subItem)
     }
 
     /** Generates a description for the profile.

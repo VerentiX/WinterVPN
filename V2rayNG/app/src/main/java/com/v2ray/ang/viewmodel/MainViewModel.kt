@@ -23,6 +23,7 @@ import com.v2ray.ang.extension.matchesPattern
 import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.handler.AngConfigManager
+import com.v2ray.ang.handler.GeoAssetUpdater
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.util.LogUtil
@@ -42,6 +43,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isRunning by lazy { MutableLiveData<Boolean>() }
     val updateListAction by lazy { MutableLiveData<Int>() }
     val updateTestResultAction by lazy { MutableLiveData<String>() }
+    val geoDataRepairAction by lazy { MutableLiveData<String>() }
+    val geoAssetsReadyAction by lazy { MutableLiveData<Boolean>() }
 
     /**
      * Refer to the official documentation for [registerReceiver](https://developer.android.com/reference/androidx/core/content/ContextCompat#registerReceiver(android.content.Context,android.content.BroadcastReceiver,android.content.IntentFilter,int):
@@ -377,6 +380,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun initAssets(assets: AssetManager) {
         viewModelScope.launch(Dispatchers.Default) {
             SettingsManager.initAssets(getApplication<AngApplication>(), assets)
+            geoAssetsReadyAction.postValue(
+                GeoAssetUpdater.hasUsableLocalFiles(getApplication<AngApplication>())
+            )
         }
     }
 
@@ -437,7 +443,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 AppConfig.MSG_STATE_START_FAILURE -> {
                     val errorMessage = intent.getStringExtra("content")
-                    if (!errorMessage.isNullOrBlank()) {
+                    if (GeoAssetUpdater.isGeoDataError(errorMessage)) {
+                        geoDataRepairAction.value = errorMessage.orEmpty()
+                    } else if (!errorMessage.isNullOrBlank()) {
                         getApplication<AngApplication>().toastError(errorMessage)
                     } else {
                         getApplication<AngApplication>().toastError(R.string.toast_services_failure)

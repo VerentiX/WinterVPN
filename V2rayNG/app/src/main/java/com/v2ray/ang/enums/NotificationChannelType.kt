@@ -18,5 +18,10 @@ enum class NotificationChannelType(
         channelId = "core_test_channel",
         channelName = "Core Test Service",
         notificationId = 12
+    ),
+    APP_UPDATE(
+        channelId = "zimavpn_app_updates",
+        channelName = "Обновления ЗимаVPN",
+        notificationId = 14
     )
 }

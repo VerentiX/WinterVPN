@@ -68,11 +68,12 @@ class SubEditActivity : BaseActivity() {
      * clear or init server config
      */
     private fun clearServer(): Boolean {
-        binding.etRemarks.text = null
+        binding.etRemarks.text = Utils.getEditable(getString(R.string.subscription_default_name))
         binding.etUrl.text = null
         binding.etFilter.text = null
         binding.chkEnable.isChecked = true
-        binding.etUpdateInterval.text = null
+        binding.autoUpdateCheck.isChecked = true
+        binding.etUpdateInterval.text = Utils.getEditable(SubscriptionItem().updateInterval.toString())
         binding.etPreProfile.text = null
         binding.etNextProfile.text = null
         return true
@@ -164,8 +165,14 @@ class SubEditActivity : BaseActivity() {
             }
         }
 
-        MmkvManager.encodeSubscription(editSubId, subItem)
-        SubscriptionUpdater.syncOne(subId = editSubId)
+        if (editSubId.isEmpty()
+            && MmkvManager.decodeSubscription(AppConfig.DEFAULT_SUBSCRIPTION_ID) != null
+            && MmkvManager.decodeServerList(AppConfig.DEFAULT_SUBSCRIPTION_ID).isEmpty()
+        ) {
+            MmkvManager.removeSubscription(AppConfig.DEFAULT_SUBSCRIPTION_ID)
+        }
+        val savedSubId = MmkvManager.encodeSubscription(editSubId, subItem)
+        SubscriptionUpdater.syncOne(subId = savedSubId)
         toastSuccess(R.string.toast_success)
         finish()
         return true

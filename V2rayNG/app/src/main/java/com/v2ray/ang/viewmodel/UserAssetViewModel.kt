@@ -11,6 +11,7 @@ import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import java.io.File
+import java.security.MessageDigest
 
 class UserAssetViewModel : ViewModel() {
     private val assets = mutableListOf<AssetUrlCache>()
@@ -46,12 +47,18 @@ class UserAssetViewModel : ViewModel() {
                     )
                 )
             }
-        // Force update URL for geoip-only-cn-private.dat
+        // Keep the two primary databases on a complete V2Fly-compatible source.
         return (builtInItems + savedAssets).map { cache ->
-            if (cache.assetUrl.remarks == AppConfig.GEOIP_ONLY_CN_PRIVATE_DAT) {
+            val canonicalUrl = when (cache.assetUrl.remarks) {
+                AppConfig.GEOSITE_DAT -> AppConfig.GEOSITE_DAT_URL
+                AppConfig.GEOIP_DAT -> AppConfig.GEOIP_DAT_URL
+                AppConfig.GEOIP_ONLY_CN_PRIVATE_DAT -> AppConfig.GEOIP_ONLY_CN_PRIVATE_URL
+                else -> null
+            }
+            if (canonicalUrl != null) {
                 cache.copy(
                     assetUrl = cache.assetUrl.copy(
-                        url = AppConfig.GEOIP_ONLY_CN_PRIVATE_URL
+                        url = canonicalUrl
                     )
                 )
             } else {
@@ -72,7 +79,9 @@ class UserAssetViewModel : ViewModel() {
 
         snapshot.forEach { cache ->
             val item = cache.assetUrl
-            val portsToTry = if (httpPort == 0) listOf(0) else listOf(httpPort, 0)
+            // Geo databases are also needed to recover a broken VPN configuration. Try the
+            // active Android network first so a dead 127.0.0.1 proxy cannot block recovery.
+            val portsToTry = if (httpPort == 0) listOf(0) else listOf(0, httpPort)
             if (portsToTry.any { tryDownload(item, extDir, it, proxyUsername, proxyPassword) }) {
                 successCount++
             } else {
@@ -105,13 +114,56 @@ class UserAssetViewModel : ViewModel() {
                     targetTemp
                 )
             ) {
-                targetTemp.renameTo(target)
-                return true
+                if (!verifyChecksum(item, targetTemp, httpPort, proxyUsername, proxyPassword)) {
+                    LogUtil.e(AppConfig.TAG, "Geo checksum verification failed: ${item.remarks}")
+                    return false
+                }
+                if (targetTemp.renameTo(target)) {
+                    return true
+                }
+                LogUtil.e(AppConfig.TAG, "Failed to atomically replace geo file: ${item.remarks}")
             }
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to download geo file: ${item.remarks}", e)
+        } finally {
+            if (targetTemp.exists()) targetTemp.delete()
         }
         return false
+    }
+
+    private fun verifyChecksum(
+        item: AssetUrlItem,
+        file: File,
+        httpPort: Int,
+        proxyUsername: String?,
+        proxyPassword: String?
+    ): Boolean {
+        val checksumUrl = when (item.remarks) {
+            AppConfig.GEOSITE_DAT -> AppConfig.GEOSITE_DAT_CHECKSUM_URL
+            AppConfig.GEOIP_DAT -> AppConfig.GEOIP_DAT_CHECKSUM_URL
+            else -> return true
+        }
+        val content = HttpUtil.getUrlContent(
+            UrlContentRequest(
+                url = checksumUrl,
+                timeout = 15_000,
+                httpPort = httpPort,
+                proxyUsername = proxyUsername,
+                proxyPassword = proxyPassword
+            )
+        ) ?: return false
+        val expected = content.trim().substringBefore(' ').lowercase()
+        if (!expected.matches(Regex("[0-9a-f]{64}"))) return false
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) } == expected
     }
 
     data class GeoDownloadResult(

@@ -14,8 +14,8 @@ import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.UpdateCheckerManager
+import com.v2ray.ang.handler.AppUpdateInstaller
 import com.v2ray.ang.util.LogUtil
-import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.launch
 
 class CheckUpdateActivity : BaseActivity() {
@@ -69,8 +69,8 @@ class CheckUpdateActivity : BaseActivity() {
             .setTitle(getString(R.string.update_new_version_found, result.latestVersion))
             .setMessage(result.releaseNotes)
             .setPositiveButton(R.string.update_now) { _, _ ->
-                result.downloadUrl?.let {
-                    Utils.openUri(this, it)
+                if (AppUpdateInstaller.download(this, result)) {
+                    toastSuccess(R.string.update_download_started)
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)

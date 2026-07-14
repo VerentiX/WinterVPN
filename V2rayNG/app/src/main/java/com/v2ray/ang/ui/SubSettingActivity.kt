@@ -3,7 +3,6 @@ package com.v2ray.ang.ui
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Bundle
-import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
 import androidx.activity.viewModels
@@ -13,19 +12,18 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
-import com.v2ray.ang.contracts.BaseAdapterListener
+import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.databinding.ActivitySubSettingBinding
-import com.v2ray.ang.databinding.ItemQrcodeBinding
+import com.v2ray.ang.dto.SubscriptionUpdateResult
+import com.v2ray.ang.dto.entities.SubscriptionCache
 import com.v2ray.ang.extension.toast
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.SettingsChangeManager
+import com.v2ray.ang.handler.SubscriptionUpdater
 import com.v2ray.ang.helper.SimpleItemTouchHelperCallback
-import com.v2ray.ang.util.LogUtil
-import com.v2ray.ang.util.QRCodeDecoder
-import com.v2ray.ang.util.Utils
 import com.v2ray.ang.viewmodel.SubscriptionsViewModel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class SubSettingActivity : BaseActivity() {
@@ -35,9 +33,6 @@ class SubSettingActivity : BaseActivity() {
     private val viewModel: SubscriptionsViewModel by viewModels()
     private lateinit var adapter: SubSettingRecyclerAdapter
     private var mItemTouchHelper: ItemTouchHelper? = null
-    private val share_method: Array<out String> by lazy {
-        resources.getStringArray(R.array.share_sub_method)
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,29 +67,7 @@ class SubSettingActivity : BaseActivity() {
         }
 
         R.id.sub_update -> {
-            showLoading()
-
-            lifecycleScope.launch(Dispatchers.IO) {
-                val result = AngConfigManager.updateConfigViaSubAll()
-                delay(500L)
-                launch(Dispatchers.Main) {
-                    if (result.successCount + result.failureCount + result.skipCount == 0) {
-                        toast(R.string.title_update_subscription_no_subscription)
-                    } else if (result.successCount > 0 && result.failureCount + result.skipCount == 0) {
-                        toast(getString(R.string.title_update_config_count, result.configCount))
-                    } else {
-                        toast(
-                            getString(
-                                R.string.title_update_subscription_result,
-                                result.configCount, result.successCount, result.failureCount, result.skipCount
-                            )
-                        )
-                    }
-                    hideLoading()
-                    refreshData()
-                }
-            }
-
+            updateSubscription(null)
             true
         }
 
@@ -108,7 +81,43 @@ class SubSettingActivity : BaseActivity() {
         adapter.notifyDataSetChanged()
     }
 
-    private inner class ActivityAdapterListener : BaseAdapterListener {
+    private fun updateSubscription(subId: String?) {
+        showLoading()
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = if (subId == null) {
+                AngConfigManager.updateConfigViaSubAll()
+            } else {
+                MmkvManager.decodeSubscription(subId)?.let {
+                    AngConfigManager.updateConfigViaSub(SubscriptionCache(subId, it))
+                } ?: SubscriptionUpdateResult(failureCount = 1)
+            }
+
+            if (result.successCount > 0) {
+                SettingsChangeManager.makeSetupGroupTab()
+                CoreServiceManager.reloadVService(this@SubSettingActivity)
+                if (subId != null) SubscriptionUpdater.syncOne(subId = subId)
+            }
+
+            launch(Dispatchers.Main) {
+                when {
+                    result.successCount + result.failureCount + result.skipCount == 0 ->
+                        toast(R.string.title_update_subscription_no_subscription)
+                    result.successCount > 0 && result.failureCount + result.skipCount == 0 ->
+                        toast(getString(R.string.title_update_config_count, result.configCount))
+                    else -> toast(
+                        getString(
+                            R.string.title_update_subscription_result,
+                            result.configCount, result.successCount, result.failureCount, result.skipCount
+                        )
+                    )
+                }
+                hideLoading()
+                refreshData()
+            }
+        }
+    }
+
+    private inner class ActivityAdapterListener : SubSettingRecyclerAdapter.SubscriptionAdapterListener {
         override fun onEdit(guid: String, position: Int) {
             startActivity(
                 Intent(ownerActivity, SubEditActivity::class.java)
@@ -132,33 +141,8 @@ class SubSettingActivity : BaseActivity() {
             }
         }
 
-        override fun onShare(url: String) {
-            AlertDialog.Builder(ownerActivity)
-                .setItems(share_method.asList().toTypedArray()) { _, i ->
-                    try {
-                        when (i) {
-                            0 -> {
-                                val ivBinding =
-                                    ItemQrcodeBinding.inflate(LayoutInflater.from(ownerActivity))
-                                ivBinding.ivQcode.setImageBitmap(
-                                    QRCodeDecoder.createQRCode(
-                                        url
-
-                                    )
-                                )
-                                AlertDialog.Builder(ownerActivity).setView(ivBinding.root).show()
-                            }
-
-                            1 -> {
-                                Utils.setClipboard(ownerActivity, url)
-                            }
-
-                            else -> ownerActivity.toast("else")
-                        }
-                    } catch (e: Exception) {
-                        LogUtil.e(AppConfig.TAG, "Share subscription failed", e)
-                    }
-                }.show()
+        override fun onUpdate(guid: String, position: Int) {
+            updateSubscription(guid)
         }
 
         override fun onRefreshData() {

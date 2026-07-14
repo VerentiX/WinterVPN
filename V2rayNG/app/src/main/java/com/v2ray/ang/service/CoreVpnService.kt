@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
@@ -28,6 +29,13 @@ import com.v2ray.ang.root.RootLanSharing
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.MyContextWrapper
 import com.v2ray.ang.util.Utils
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.lang.ref.SoftReference
 
 @SuppressLint("VpnServicePolicy")
@@ -35,6 +43,18 @@ class CoreVpnService : VpnService(), ServiceControl {
     private lateinit var mInterface: ParcelFileDescriptor
     private var isRunning = false
     private var tun2SocksService: Tun2SocksControl? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val lifecycleLock = Any()
+    private var networkReloadJob: Job? = null
+
+    @Volatile
+    private var currentUnderlyingNetwork: Network? = null
+    private var lastUnderlyingNetwork: Network? = null
+    private var lastLinkFingerprint: String? = null
+    private var hasCapabilitySnapshot = false
+    private var lastNetworkValidated = false
+    private var lastNetworkBlocked = false
+    private var networkCallbackRegistered = false
 
     /**destroy
      * Unfortunately registerDefaultNetworkCallback is going to return our VPN interface: https://android.googlesource.com/platform/frameworks/base/+/dda156ab0c5d66ad82bdcf76cda07cbc0a9c8a2e
@@ -59,16 +79,67 @@ class CoreVpnService : VpnService(), ServiceControl {
     private val defaultNetworkCallback by lazy {
         object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                setUnderlyingNetworks(arrayOf(network))
+                val previous = lastUnderlyingNetwork
+                currentUnderlyingNetwork = network
+                lastUnderlyingNetwork = network
+                lastLinkFingerprint = null
+                hasCapabilitySnapshot = false
+                lastNetworkBlocked = false
+                applyUnderlyingNetwork(network)
+
+                if (previous != null && previous != network && isRunning) {
+                    scheduleNetworkReload()
+                }
             }
 
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                // it's a good idea to refresh capabilities
-                setUnderlyingNetworks(arrayOf(network))
+                if (currentUnderlyingNetwork == network) {
+                    val validated = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    val recovered = hasCapabilitySnapshot && !lastNetworkValidated && validated
+                    lastNetworkValidated = validated
+                    hasCapabilitySnapshot = true
+                    applyUnderlyingNetwork(network)
+                    if (recovered && isRunning) {
+                        scheduleNetworkReload()
+                    }
+                }
+            }
+
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+                if (currentUnderlyingNetwork != network) return
+
+                val fingerprint = buildString {
+                    append(linkProperties.interfaceName.orEmpty())
+                    append('|')
+                    append(linkProperties.linkAddresses.map { it.toString() }.sorted().joinToString(","))
+                    append('|')
+                    append(linkProperties.routes.map { it.toString() }.sorted().joinToString(","))
+                    append('|')
+                    append(linkProperties.dnsServers.map { it.hostAddress.orEmpty() }.sorted().joinToString(","))
+                }
+                val previous = lastLinkFingerprint
+                lastLinkFingerprint = fingerprint
+                if (previous != null && previous != fingerprint && isRunning) {
+                    scheduleNetworkReload()
+                }
+            }
+
+            override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+                if (currentUnderlyingNetwork != network) return
+                val unblocked = lastNetworkBlocked && !blocked
+                lastNetworkBlocked = blocked
+                if (unblocked && isRunning) {
+                    scheduleNetworkReload()
+                }
             }
 
             override fun onLost(network: Network) {
-                setUnderlyingNetworks(null)
+                if (currentUnderlyingNetwork == network) {
+                    currentUnderlyingNetwork = null
+                    lastLinkFingerprint = null
+                    hasCapabilitySnapshot = false
+                    applyUnderlyingNetwork(null)
+                }
             }
         }
     }
@@ -110,6 +181,7 @@ class CoreVpnService : VpnService(), ServiceControl {
         }
 
         NotificationManager.cancelNotification()
+        serviceScope.cancel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -142,6 +214,12 @@ class CoreVpnService : VpnService(), ServiceControl {
 
     override fun stopService() {
         stopAllService(true)
+    }
+
+    override fun reloadService() {
+        serviceScope.launch {
+            reloadCoreKeepingTun("profile change", skipIfSelectedAlreadyRunning = true)
+        }
     }
 
     override fun vpnProtect(socket: Int): Boolean {
@@ -268,9 +346,10 @@ class CoreVpnService : VpnService(), ServiceControl {
      */
     private fun configurePlatformFeatures(builder: Builder) {
         // Android P (API 28) and above: Configure network callbacks
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && !networkCallbackRegistered) {
             try {
                 connectivity.requestNetwork(defaultNetworkRequest, defaultNetworkCallback)
+                networkCallbackRegistered = true
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to request network", e)
             }
@@ -349,19 +428,70 @@ class CoreVpnService : VpnService(), ServiceControl {
         tun2SocksService?.startTun2Socks()
     }
 
+    private fun scheduleNetworkReload() {
+        networkReloadJob?.cancel()
+        networkReloadJob = serviceScope.launch {
+            // Collapse the callback burst and let Android install the new link routes.
+            delay(150)
+            reloadCoreKeepingTun("underlying network changed")
+        }
+    }
+
+    private fun applyUnderlyingNetwork(network: Network?) {
+        try {
+            if (!connectivity.bindProcessToNetwork(network)) {
+                LogUtil.w(AppConfig.TAG, "StartCore-VPN: Failed to bind process to $network")
+            }
+            setUnderlyingNetworks(network?.let { arrayOf(it) })
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to apply underlying network $network", e)
+        }
+    }
+
+    private fun reloadCoreKeepingTun(reason: String, skipIfSelectedAlreadyRunning: Boolean = false) {
+        synchronized(lifecycleLock) {
+            if (!isRunning || !::mInterface.isInitialized) return
+            if (skipIfSelectedAlreadyRunning && CoreServiceManager.isSelectedProfileRunning()) return
+
+            LogUtil.i(AppConfig.TAG, "StartCore-VPN: Soft reload ($reason)")
+            if (!CoreServiceManager.reloadCoreLoop(mInterface)) {
+                LogUtil.e(AppConfig.TAG, "StartCore-VPN: Soft reload failed; stopping safely")
+                stopAllServiceLocked(true)
+            }
+        }
+    }
+
     private fun stopAllService(isForced: Boolean = true) {
+        synchronized(lifecycleLock) {
+            stopAllServiceLocked(isForced)
+        }
+    }
+
+    private fun stopAllServiceLocked(isForced: Boolean = true) {
 //        val configName = defaultDPreference.getPrefString(PREF_CURR_CONFIG_GUID, "")
 //        val emptyInfo = VpnNetworkInfo()
 //        val info = loadVpnNetworkInfo(configName, emptyInfo)!! + (lastNetworkInfo ?: emptyInfo)
 //        saveVpnNetworkInfo(configName, info)
         isRunning = false
+        networkReloadJob?.cancel()
+        networkReloadJob = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
-                connectivity.unregisterNetworkCallback(defaultNetworkCallback)
+                if (networkCallbackRegistered) {
+                    connectivity.unregisterNetworkCallback(defaultNetworkCallback)
+                    networkCallbackRegistered = false
+                }
             } catch (e: Exception) {
                 LogUtil.w(AppConfig.TAG, "StartCore-VPN: Failed to unregister callback", e)
             }
         }
+        currentUnderlyingNetwork = null
+        lastUnderlyingNetwork = null
+        lastLinkFingerprint = null
+        hasCapabilitySnapshot = false
+        lastNetworkValidated = false
+        lastNetworkBlocked = false
+        applyUnderlyingNetwork(null)
 
         tun2SocksService?.stopTun2Socks()
         tun2SocksService = null
@@ -377,15 +507,6 @@ class CoreVpnService : VpnService(), ServiceControl {
             //in a row for several times. You will find that later created v2ray core report port in use
             //which means the first v2ray core somehow failed to stop and release the port.
             stopSelf()
-
-            // Add a small delay to allow the async core stop operation to complete
-            // before closing the VPN interface, preventing a race condition that can
-            // leave the VPN icon in the status bar after stopping the service.
-            try {
-                Thread.sleep(100)
-            } catch (e: InterruptedException) {
-                LogUtil.w(AppConfig.TAG, "StartCore-VPN: Sleep interrupted", e)
-            }
 
             try {
                 if (::mInterface.isInitialized) {

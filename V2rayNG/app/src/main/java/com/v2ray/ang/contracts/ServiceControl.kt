@@ -19,6 +19,9 @@ interface ServiceControl {
      */
     fun stopService()
 
+    /** Reloads only the proxy core while keeping the surrounding service alive. */
+    fun reloadService()
+
     /**
      * Protects the VPN socket.
      * @param socket The socket to protect.

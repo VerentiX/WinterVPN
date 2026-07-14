@@ -10,6 +10,9 @@ import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.MyContextWrapper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.lang.ref.SoftReference
 
 class CoreProxyOnlyService : Service(), ServiceControl {
@@ -63,6 +66,12 @@ class CoreProxyOnlyService : Service(), ServiceControl {
      */
     override fun stopService() {
         stopSelf()
+    }
+
+    override fun reloadService() {
+        CoroutineScope(Dispatchers.IO).launch {
+            CoreServiceManager.reloadCoreLoop(null)
+        }
     }
 
     /**

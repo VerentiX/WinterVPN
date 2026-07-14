@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.system.OsConstants
 import androidx.core.content.ContextCompat
@@ -19,6 +21,7 @@ import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.toast
 import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.GeoAssetUpdater
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.SpeedtestManager
@@ -40,14 +43,22 @@ import libv2ray.CoreController
 import libv2ray.ProcessFinder
 import java.lang.ref.SoftReference
 import java.net.InetSocketAddress
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 object CoreServiceManager {
 
     private val coreController: CoreController = CoreNativeManager.newCoreController(CoreCallback())
     private val mMsgReceive = ReceiveMessageHandler()
     private var currentConfig: ProfileItem? = null
+    private var currentConfigGuid: String? = null
     private var processFinder: XrayProcessFinder? = null
     private var browserDialer: IDialerService? = null
+    private val coreLifecycleLock = ReentrantLock()
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    @Volatile
+    private var suppressShutdownStop = false
 
     var serviceControl: SoftReference<ServiceControl>? = null
         set(value) {
@@ -67,14 +78,14 @@ object CoreServiceManager {
      */
     fun startVServiceFromToggle(context: Context): Boolean {
         if (MmkvManager.getSelectServer().isNullOrEmpty()) {
-            context.toast(R.string.app_tile_first_use)
+            showToast(context) { toast(R.string.app_tile_first_use) }
             return false
         }
         try {
             startContextService(context)
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${e.message}", e)
-            context.toast(e.message ?: e.javaClass.simpleName)
+            showToast(context) { toast(e.message ?: e.javaClass.simpleName) }
             return false
         }
         return true
@@ -96,7 +107,17 @@ object CoreServiceManager {
             startContextService(context)
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${e.message}", e)
-            context.toast(e.message ?: e.javaClass.simpleName)
+            showToast(context) { toast(e.message ?: e.javaClass.simpleName) }
+        }
+    }
+
+    /** Toasty requires a prepared main looper, while service actions may come from workers. */
+    private fun showToast(context: Context, action: Context.() -> Unit) {
+        val appContext = context.applicationContext
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            appContext.action()
+        } else {
+            mainHandler.post { appContext.action() }
         }
     }
 
@@ -105,8 +126,17 @@ object CoreServiceManager {
      * @param context The context from which the service is stopped.
      */
     fun stopVService(context: Context) {
-        //context.toast(R.string.toast_services_stop)
         MessageUtil.sendMsg2Service(context, AppConfig.MSG_STATE_STOP, "")
+    }
+
+    /** Reloads the selected profile without destroying the VPN interface. */
+    fun reloadVService(context: Context) {
+        MessageUtil.sendMsg2Service(context, AppConfig.MSG_STATE_RELOAD, "")
+    }
+
+    /** Performs a full service restart without relying on a guessed fixed delay. */
+    fun restartVService(context: Context) {
+        MessageUtil.sendMsg2Service(context, AppConfig.MSG_STATE_RESTART, "")
     }
 
     /**
@@ -120,6 +150,10 @@ object CoreServiceManager {
      * @return The name of the running server.
      */
     fun getRunningServerName() = currentConfig?.remarks.orEmpty()
+
+    fun isSelectedProfileRunning(): Boolean {
+        return coreController.isRunning && currentConfigGuid == MmkvManager.getSelectServer()
+    }
 
     /**
      * Starts the context service for V2Ray.
@@ -163,14 +197,8 @@ object CoreServiceManager {
 //        if (!result.status) error(result.errorMessage.ifBlank { "Failed to get V2Ray config" })
 
         if (config.insecure == true) {
-            context.toastError(R.string.toast_allow_insecure_deprecated)
-            context.toastError(R.string.toast_allow_insecure_deprecated)
-        }
-
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PROXY_SHARING)) {
-            context.toast(R.string.toast_warning_pref_proxysharing_short)
-        } else {
-            context.toast(R.string.toast_services_start)
+            showToast(context) { toastError(R.string.toast_allow_insecure_deprecated) }
+            showToast(context) { toastError(R.string.toast_allow_insecure_deprecated) }
         }
 
         val isRootMode = SettingsManager.isRootMode()
@@ -212,6 +240,10 @@ object CoreServiceManager {
      * Starts the V2Ray core service.
      */
     fun startCoreLoop(vpnInterface: ParcelFileDescriptor?): Boolean {
+        return coreLifecycleLock.withLock { startCoreLoopLocked(vpnInterface) }
+    }
+
+    private fun startCoreLoopLocked(vpnInterface: ParcelFileDescriptor?): Boolean {
         if (coreController.isRunning) {
             LogUtil.w(AppConfig.TAG, "StartCore-Manager: Core already running")
             return false
@@ -223,15 +255,19 @@ object CoreServiceManager {
             return false
         }
 
-        try {
+        return try {
             doStartCoreLoop(service, vpnInterface)
-            return true
+            suppressShutdownStop = false
+            true
         } catch (e: Exception) {
             val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: $message", e)
+            if (GeoAssetUpdater.isGeoDataError(message)) {
+                GeoAssetUpdater.forceUpdate(service, reconnectAfterUpdate = true)
+            }
             MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
             NotificationManager.cancelNotification()
-            return false
+            false
         }
     }
 
@@ -254,6 +290,7 @@ object CoreServiceManager {
         ContextCompat.registerReceiver(service, mMsgReceive, mFilter, Utils.receiverFlags())
 
         currentConfig = config
+        currentConfigGuid = guid
         var tunFd = vpnInterface?.fd ?: 0
         val dialerAddr = if (currentConfig?.browserDialerMode.isNullOrEmpty()) {
             ""
@@ -295,15 +332,36 @@ object CoreServiceManager {
      * @return True if the core was stopped successfully, false otherwise.
      */
     fun stopCoreLoop(): Boolean {
+        return coreLifecycleLock.withLock { stopCoreLoopLocked(notifyUi = true) }
+    }
+
+    /**
+     * Stops the old core and starts the selected profile on the same TUN descriptor.
+     * Existing app-side sockets stay attached to Android's VPN interface and reconnect
+     * as soon as the new core is ready.
+     */
+    fun reloadCoreLoop(vpnInterface: ParcelFileDescriptor?): Boolean {
+        return coreLifecycleLock.withLock {
+            val service = getService() ?: return@withLock false
+            LogUtil.i(AppConfig.TAG, "StartCore-Manager: Soft-reloading core")
+
+            stopCoreLoopLocked(notifyUi = false)
+            val started = startCoreLoopLocked(vpnInterface)
+            started
+        }
+    }
+
+    private fun stopCoreLoopLocked(notifyUi: Boolean): Boolean {
         val service = getService() ?: return false
 
+        suppressShutdownStop = true
         if (coreController.isRunning) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    coreController.stopLoop()
-                } catch (e: Exception) {
-                    LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop V2Ray loop", e)
-                }
+            try {
+                // stopLoop is deliberately synchronous. Starting another core before it
+                // returns caused intermittent "port already in use" failures.
+                coreController.stopLoop()
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop V2Ray loop", e)
             }
         }
 
@@ -314,8 +372,10 @@ object CoreServiceManager {
             browserDialer = null
         }
 
-        MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
-        NotificationManager.cancelNotification()
+        if (notifyUi) {
+            MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
+            NotificationManager.cancelNotification()
+        }
 
         try {
             service.unregisterReceiver(mMsgReceive)
@@ -427,6 +487,9 @@ object CoreServiceManager {
          * @return 0 for success, any other value for failure.
          */
         override fun shutdown(): Long {
+            if (suppressShutdownStop) {
+                return 0
+            }
             val serviceControl = serviceControl?.get() ?: return -1
             return try {
                 serviceControl.stopService()
@@ -522,9 +585,16 @@ object CoreServiceManager {
 
                 AppConfig.MSG_STATE_RESTART -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Restart service")
-                    serviceControl.stopService()
-                    Thread.sleep(500L)
-                    startVService(serviceControl.getService())
+                    val appContext = serviceControl.getService().applicationContext
+                    CoroutineScope(Dispatchers.IO).launch {
+                        serviceControl.stopService()
+                        startVService(appContext)
+                    }
+                }
+
+                AppConfig.MSG_STATE_RELOAD -> {
+                    LogUtil.i(AppConfig.TAG, "StartCore-Manager: Soft reload service")
+                    serviceControl.reloadService()
                 }
 
                 AppConfig.MSG_MEASURE_DELAY -> {

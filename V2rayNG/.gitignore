@@ -1,0 +1,11 @@
+# The parent v2rayNG repository ignores generic *.dat build artifacts. These two
+# files are intentional APK assets and must be versioned with the Android client.
+!app/src/main/assets/geosite.dat
+!app/src/main/assets/geoip.dat
+
+# The application is built from these local native artifacts. The parent
+# repository ignores generic *.aar and *.so files, so explicitly keep only the
+# copies used by the Android module.
+!app/libs/
+!app/libs/*.aar
+!app/libs/**/*.so

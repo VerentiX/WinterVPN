@@ -1,90 +1,205 @@
-# v2rayNG
+<p align="center">
+  <img src="V2rayNG/branding/zimavpn_launcher_adaptive_master_1024.png" width="128" alt="ЗимаVPN">
+</p>
 
-A V2Ray client for Android, support [Xray core](https://github.com/XTLS/Xray-core) and [v2fly core](https://github.com/v2fly/v2ray-core)
+<h1 align="center">ЗимаVPN</h1>
 
-[![API](https://img.shields.io/badge/API-24%2B-yellow.svg?style=flat)](https://developer.android.com/about/versions/lollipop)
-[![Kotlin Version](https://img.shields.io/badge/Kotlin-2.4.0-blue.svg)](https://kotlinlang.org)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/m/2dust/v2rayNG)](https://github.com/2dust/v2rayNG/commits/master)
-[![CodeFactor](https://www.codefactor.io/repository/github/2dust/v2rayng/badge)](https://www.codefactor.io/repository/github/2dust/v2rayng)
-[![GitHub Releases](https://img.shields.io/github/downloads/2dust/v2rayNG/latest/total?logo=github)](https://github.com/2dust/v2rayNG/releases)
-[![Chat on Telegram](https://img.shields.io/badge/Chat%20on-Telegram-brightgreen.svg)](https://t.me/v2rayn)
+<p align="center">
+  Android-клиент на базе Xray с умным выбором приоритетных маршрутов,
+  быстрым переключением Wi‑Fi/LTE и встроенным обновлением GeoIP/Geosite.
+</p>
 
----
+<p align="center">
+  <a href="https://github.com/VerentiX/WinterVPN/releases"><img src="https://img.shields.io/github/v/release/VerentiX/WinterVPN?display_name=tag&style=flat-square" alt="Release"></a>
+  <img src="https://img.shields.io/badge/Android-7.0%2B-3DDC84?logo=android&logoColor=white&style=flat-square" alt="Android 7.0+">
+  <img src="https://img.shields.io/badge/Kotlin-2.4.0-7F52FF?logo=kotlin&logoColor=white&style=flat-square" alt="Kotlin 2.4.0">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue?style=flat-square" alt="GPLv3"></a>
+</p>
 
-## Download / 下载
+> [!IMPORTANT]
+> ЗимаVPN — это клиентское приложение. Оно не предоставляет VPN-сервер,
+> подписку или доступ к сторонним сетям. Для подключения необходим собственный
+> сервер либо совместимая конфигурация Xray.
 
-Download the latest release here:
+## Возможности
 
-在这里下载最新版本：
+- Подключение через Xray Core и стандартный Android `VpnService`.
+- Импорт обычных профилей, подписок и пользовательских JSON-конфигураций.
+- Умный приоритетный failover для маршрутов `P0`, `P5`, `P10` и других уровней.
+- Несколько серверов с одинаковым приоритетом, например несколько `P0`.
+- Закрепление выбранного маршрута без постоянных переключений из-за колебаний пинга.
+- Параллельная проверка резервных маршрутов после отказа активного подключения.
+- Сохранение выбранного маршрута при переходе между Wi‑Fi и мобильной сетью.
+- Жёсткое пересоздание TUN при реальной смене сети для сброса зависших TCP/UDP-сессий.
+- Энергосберегающая частота проверок при выключенном экране.
+- Обновление `geoip.dat` и `geosite.dat` непосредственно из приложения.
+- Отображение фактически используемого приоритетного маршрута.
+- Проверка обновлений приложения через GitHub Releases.
 
-[https://github.com/2dust/v2rayNG/releases](https://github.com/2dust/v2rayNG/releases)
+## Как работает выбор маршрута
 
-> [!TIP]
-> v2rayNG is the mobile version. For the desktop version, please visit the v2rayN \
-> v2rayNG 是手机版，电脑版请访问 v2rayN
->
-> https://github.com/2dust/v2rayN
-
----
-
-### Geoip and Geosite
-
-- geoip.dat and geosite.dat files are in `Android/data/com.v2ray.ang/files/assets` (path may differ on some Android device)
-- download feature will get enhanced version in this [repo](https://github.com/Loyalsoldier/v2ray-rules-dat) (note: it needs a working proxy)
-- latest official [domain list](https://github.com/Loyalsoldier/v2ray-rules-dat) and [ip list](https://github.com/Loyalsoldier/geoip) can be imported manually
-- possible to use a third-party dat file in the same folder, like [h2y](https://guide.v2fly.org/routing/sitedata.html#%E5%A4%96%E7%BD%AE%E7%9A%84%E5%9F%9F%E5%90%8D%E6%96%87%E4%BB%B6)
-
-More in our [wiki](https://github.com/2dust/v2rayNG/wiki)
-
-### Geoip 与 Geosite
-
-- geoip.dat 和 geosite.dat 文件位于 `Android/data/com.v2ray.ang/files/assets`（部分设备路径可能不同）
-- 下载功能将获取该 [仓库](https://github.com/Loyalsoldier/v2ray-rules-dat) 中的增强版本（注意：此功能需要一个可用的代理）
-- 最新官方 [域名列表](https://github.com/Loyalsoldier/v2ray-rules-dat) 和 [IP 列表](https://github.com/Loyalsoldier/geoip) 可手动导入
-- 也可在同一文件夹中使用第三方 dat 文件，例如 [h2y](https://guide.v2fly.org/routing/sitedata.html#%E5%A4%96%E7%BD%AE%E7%9A%84%E5%9F%9F%E5%90%8D%E6%96%87%E4%BB%B6)
-
-更多内容请见我们的 [wiki](https://github.com/2dust/v2rayNG/wiki)
-
----
-
-## Development guide / 开发指南
-
-### Note
-
-- Android project under the V2rayNG folder can be compiled directly in Android Studio, or using the Gradle wrapper. But the v2ray core inside the aar is (probably) outdated.
-- The aar can be compiled from the Golang project [AndroidLibV2rayLite](https://github.com/2dust/AndroidLibV2rayLite) or [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite). For a quick start, read the guides for [Go Mobile](https://github.com/golang/go/wiki/Mobile) and [Makefiles for Go Developers](https://tutorialedge.net/golang/makefiles-for-go-developers/).
-- v2rayNG can run on Android Emulators. For WSA, VPN permission needs to be granted via `appops set [package name] ACTIVATE_VPN allow`.
-
-### 提示
-
-- V2rayNG 文件夹下的 Android 项目可直接在 Android Studio 中编译，或使用 Gradle wrapper 编译。但 aar 内置的 v2ray core（可能）已过时。
-- aar 可由 Golang 项目 [AndroidLibV2rayLite](https://github.com/2dust/AndroidLibV2rayLite) 或 [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite) 编译而成。快速入门可参考 [Go Mobile](https://github.com/golang/go/wiki/Mobile) 指南和 [Makefiles for Go Developers](https://tutorialedge.net/golang/makefiles-for-go-developers/)。
-- v2rayNG 可在 Android 模拟器上运行。对于 WSA，需要通过 `appops set [package name] ACTIVATE_VPN allow` 授予 VPN 权限。
-
----
-
-
-## GPG Verification / GPG 签名校验
-
-Release files are signed with GPG to verify authenticity and integrity, helping prevent mirror, ISP, or CDN hijacking.
-
-发布文件已使用 GPG 签名，可用于校验文件真实性与完整性，预防镜像站、运营商或 CDN 劫持。
-
-### Fingerprint / 公钥指纹
+Приоритет определяется числом в теге маршрута: чем меньше число, тем выше
+приоритет. Например, `P0` предпочтительнее `P5`, а `P5` предпочтительнее `P10`.
 
 ```text
-7694 5E9F 3E9A 168F 8070 F195 805D 661C
-134D FAF6 8903 C199 463C 31E5 AE90 3AE0
+Доступен P0? ── да ──> выбрать самый быстрый доступный P0
+      │
+      нет
+      ↓
+Доступен P5? ── да ──> выбрать самый быстрый доступный P5
+      │
+      нет
+      ↓
+Проверить P10, P15 и следующие уровни
 ```
 
----
+Основные правила:
 
-## Community / 社区
+1. При первом полном запуске маршруты проверяются параллельно.
+2. Сначала выбирается лучший доступный приоритет.
+3. Минимальная задержка учитывается только между маршрутами одного приоритета.
+4. После выбора приложение остаётся на текущем маршруте.
+5. Если активный маршрут перестал отвечать, остальные варианты проверяются параллельно.
+6. При восстановлении более приоритетного уровня приложение может вернуться на него.
 
-Telegram Group / Telegram 群组：
+По умолчанию активный маршрут проверяется каждые 5 секунд при включённом экране
+и раз в 60 секунд при выключенном. Адрес проверки берётся из поля
+`burstObservatory.pingConfig.destination` пользовательского JSON. Если корректный
+адрес отсутствует, используется URL проверки из настроек приложения.
 
-[https://t.me/v2rayN](https://t.me/v2rayN)
+Пример соответствующей части конфигурации:
 
-Telegram Channel / Telegram 频道：
+```json
+{
+  "burstObservatory": {
+    "subjectSelector": ["route-"],
+    "pingConfig": {
+      "destination": "https://example.com/generate_204",
+      "httpMethod": "GET",
+      "timeout": "3s"
+    }
+  }
+}
+```
 
-[https://t.me/github_2dust](https://t.me/github_2dust)
+Маршруты одного уровня должны иметь одинаковый номер приоритета, например
+`route-p0000-primary` и `route-p0000-secondary` для группы `P0`.
+
+## Переключение Wi‑Fi и LTE
+
+При реальной смене основной сети приложение:
+
+1. Запоминает текущий выбранный маршрут.
+2. Привязывает исходящие соединения к новой Android-сети.
+3. Пересоздаёт TUN и перезапускает транспорт, чтобы закрыть старые сессии.
+4. Запускает Xray с тем же активным маршрутом.
+
+Повторные системные события одной и той же сети объединяются и не вызывают
+лишних перезапусков. После ручной остановки VPN или нового полного запуска
+начальный выбор по приоритету и задержке выполняется заново.
+
+## Установка
+
+Текущая версия исходников: **1.1.3**.
+
+Готовые APK публикуются в разделе
+[GitHub Releases](https://github.com/VerentiX/WinterVPN/releases).
+
+Для большинства современных устройств подходит вариант `arm64-v8a`.
+Универсальный APK содержит библиотеки для всех поддерживаемых архитектур и
+занимает больше места.
+
+> [!NOTE]
+> Для обновления поверх уже установленной версии APK должен быть подписан тем же
+> ключом. Сборка с другим ключом устанавливается только после удаления предыдущей версии.
+
+## Сборка из исходников
+
+### Требования
+
+- Android Studio с поддержкой текущей версии Android Gradle Plugin.
+- JDK 17 или новее.
+- Android SDK для `compileSdk 37`.
+- Git.
+
+Репозиторий является монорепозиторием: необходимые исходники Xray-обвязки,
+`hev-socks5-tunnel` и готовые Android-библиотеки уже находятся внутри него.
+Загрузка submodule не требуется.
+
+### Android Studio
+
+1. Клонируйте репозиторий:
+
+   ```bash
+   git clone https://github.com/VerentiX/WinterVPN.git
+   ```
+
+2. Откройте каталог `WinterVPN/V2rayNG` в Android Studio.
+3. Дождитесь завершения Gradle Sync.
+4. Выберите вариант `fdroidDebug` или `fdroidRelease`.
+5. Запустите сборку через **Build → Build APK(s)**.
+
+### Командная строка
+
+Windows:
+
+```powershell
+cd V2rayNG
+.\gradlew.bat :app:assembleFdroidDebug
+```
+
+Linux/macOS:
+
+```bash
+cd V2rayNG
+./gradlew :app:assembleFdroidDebug
+```
+
+Запуск модульных тестов:
+
+```powershell
+.\gradlew.bat :app:testFdroidDebugUnitTest
+```
+
+## Структура репозитория
+
+```text
+WinterVPN/
+├── AndroidLibXrayLite/   # Android-обвязка Xray Core
+├── hev-socks5-tunnel/    # исходники TUN ↔ SOCKS транспорта
+└── V2rayNG/              # Android-приложение ЗимаVPN
+    ├── app/
+    ├── branding/
+    └── gradle/
+```
+
+Все каталоги входят в один Git-репозиторий. Вложенных Git-репозиториев и
+submodule нет.
+
+## GeoIP и Geosite
+
+Базовые `geoip.dat` и `geosite.dat` включены в приложение. После установки
+рабочие копии находятся в каталоге приложения, обычно:
+
+```text
+Android/data/com.v2ray.ang.fdroid/files/assets
+```
+
+Точный путь может отличаться в зависимости от варианта сборки и версии Android.
+Файлы можно обновлять средствами приложения или заменять совместимыми версиями.
+
+## Происхождение проекта
+
+ЗимаVPN основан на открытом проекте
+[2dust/v2rayNG](https://github.com/2dust/v2rayNG) и использует компоненты
+[Xray Core](https://github.com/XTLS/Xray-core) и
+[hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel).
+
+Спасибо авторам и участникам этих проектов. Изменения ЗимаVPN, включая логику
+приоритетных маршрутов и обработку смены сети, поддерживаются в этом репозитории.
+
+## Лицензия
+
+Проект распространяется на условиях
+[GNU General Public License v3.0](LICENSE). Лицензии сторонних компонентов
+сохранены в соответствующих каталогах.

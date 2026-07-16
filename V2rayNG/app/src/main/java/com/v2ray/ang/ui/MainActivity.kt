@@ -75,6 +75,11 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
         subscriptionCardAdapter = SubscriptionCardAdapter(object : SubscriptionCardAdapter.Listener {
             override fun onSelectProfile(guid: String) = selectProfile(guid)
+            override fun onViewProfileConfig(guid: String) {
+                requestActivityLauncher.launch(
+                    Intent(this@MainActivity, ConfigViewerActivity::class.java).putExtra("guid", guid)
+                )
+            }
             override fun onUpdateSubscription(subscription: SubscriptionCache) {
                 updateSubscription(subscription)
             }
@@ -136,7 +141,7 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
             showGeoUpdateProgress(getString(R.string.geo_update_repairing), 0)
         }
         mainViewModel.geoAssetsReadyAction.observe(this) { ready ->
-            if (ready && !geoProgressVisible) {
+            if (ready && geoProgressVisible) {
                 showGeoUpdateProgress(getString(R.string.geo_update_ready), 100)
                 lifecycleScope.launch {
                     delay(1_200L)
@@ -150,7 +155,6 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         mainViewModel.startListenBroadcast()
         mainViewModel.initAssets(assets)
         observeGeoAssetUpdates()
-        GeoAssetUpdater.scheduleFirstInstall(this)
     }
 
     private fun observeGeoAssetUpdates() {

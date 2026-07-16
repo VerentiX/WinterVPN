@@ -14,7 +14,7 @@ import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import android.os.StrictMode
+import android.os.SystemClock
 import androidx.annotation.RequiresApi
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.LOOPBACK
@@ -40,8 +40,35 @@ import java.lang.ref.SoftReference
 
 @SuppressLint("VpnServicePolicy")
 class CoreVpnService : VpnService(), ServiceControl {
+    companion object {
+        /**
+         * A TCP session cannot survive a Wi-Fi/LTE source-address change.
+         * Do not wait for Android's potentially slow VALIDATED probe before
+         * rebuilding the VPN path; Telegram otherwise waits on its dead
+         * long-lived connection while browsers create fresh sockets.
+         */
+        private const val TRANSPORT_SWITCH_RECONNECT_DELAY_MS = 550L
+
+        /**
+         * Link-properties callbacks are noisy: Android can publish several route
+         * snapshots for one DHCP, validation, or VPN update. Restarting Xray for
+         * each one also restarts observatory probes in custom profiles.
+         */
+        private const val SAME_NETWORK_RELOAD_COOLDOWN_MS = 30_000L
+    }
+
+    private enum class ServiceState {
+        STOPPED,
+        STARTING,
+        RUNNING,
+        RELOADING,
+        STOPPING,
+    }
+
     private lateinit var mInterface: ParcelFileDescriptor
     private var isRunning = false
+    @Volatile
+    private var serviceState = ServiceState.STOPPED
     private var tun2SocksService: Tun2SocksControl? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lifecycleLock = Any()
@@ -55,6 +82,14 @@ class CoreVpnService : VpnService(), ServiceControl {
     private var lastNetworkValidated = false
     private var lastNetworkBlocked = false
     private var networkCallbackRegistered = false
+    private var linkPropertiesReady = false
+    private var pendingUnderlyingSwitch = false
+    private var lastTransportDescription = "unknown"
+    private var lastUnderlyingMtu = 0
+    @Volatile
+    private var lastSoftNetworkReloadAt = 0L
+    @Volatile
+    private var lastSoftReloadNetwork: Network? = null
 
     /**destroy
      * Unfortunately registerDefaultNetworkCallback is going to return our VPN interface: https://android.googlesource.com/platform/frameworks/base/+/dda156ab0c5d66ad82bdcf76cda07cbc0a9c8a2e
@@ -70,6 +105,7 @@ class CoreVpnService : VpnService(), ServiceControl {
         NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
             .build()
     }
 
@@ -80,26 +116,45 @@ class CoreVpnService : VpnService(), ServiceControl {
         object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 val previous = lastUnderlyingNetwork
+                LogUtil.transport("Network available=$network previous=$previous")
                 currentUnderlyingNetwork = network
                 lastUnderlyingNetwork = network
                 lastLinkFingerprint = null
                 hasCapabilitySnapshot = false
+                linkPropertiesReady = false
                 lastNetworkBlocked = false
                 applyUnderlyingNetwork(network)
 
-                if (previous != null && previous != network && isRunning) {
-                    scheduleNetworkReload()
+                pendingUnderlyingSwitch = previous != null && previous != network
+                if (pendingUnderlyingSwitch && isServiceReady()) {
+                    // A transport change invalidates existing long-lived TCP/UDP
+                    // flows. Recycle Xray soon even if the system takes several
+                    // seconds to report VALIDATED for a newly attached LTE cell.
+                    // A normal validated callback can still shorten this to 150 ms.
+                    LogUtil.transport("Transport changed; scheduling fast reconnect")
+                    scheduleNetworkReload(
+                        delayMs = TRANSPORT_SWITCH_RECONNECT_DELAY_MS,
+                        consumePendingSwitch = false,
+                        recreateTun = true,
+                    )
                 }
             }
 
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
                 if (currentUnderlyingNetwork == network) {
                     val validated = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    lastTransportDescription = describeTransport(networkCapabilities)
+                    LogUtil.transport(
+                        "Network capabilities=$network transport=$lastTransportDescription " +
+                            "validated=$validated metered=${!networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)}"
+                    )
                     val recovered = hasCapabilitySnapshot && !lastNetworkValidated && validated
                     lastNetworkValidated = validated
                     hasCapabilitySnapshot = true
                     applyUnderlyingNetwork(network)
-                    if (recovered && isRunning) {
+                    if (pendingUnderlyingSwitch) {
+                        scheduleValidatedNetworkReloadIfReady()
+                    } else if (recovered && isServiceReady()) {
                         scheduleNetworkReload()
                     }
                 }
@@ -114,13 +169,29 @@ class CoreVpnService : VpnService(), ServiceControl {
                     append(linkProperties.linkAddresses.map { it.toString() }.sorted().joinToString(","))
                     append('|')
                     append(linkProperties.routes.map { it.toString() }.sorted().joinToString(","))
-                    append('|')
-                    append(linkProperties.dnsServers.map { it.hostAddress.orEmpty() }.sorted().joinToString(","))
                 }
                 val previous = lastLinkFingerprint
                 lastLinkFingerprint = fingerprint
-                if (previous != null && previous != fingerprint && isRunning) {
-                    scheduleNetworkReload()
+                linkPropertiesReady = true
+                lastUnderlyingMtu = linkProperties.mtu
+                val mtuChanged = updateAdaptiveMtu(linkProperties)
+                LogUtil.transport(
+                    "Link ready=$network iface=${linkProperties.interfaceName} " +
+                        "underlyingMtu=${linkProperties.mtu} effectiveMtu=${SettingsManager.getEffectiveVpnMtu()} " +
+                        "addresses=${linkProperties.linkAddresses.size} routes=${linkProperties.routes.size}"
+                )
+                if (pendingUnderlyingSwitch) {
+                    scheduleValidatedNetworkReloadIfReady()
+                } else if (mtuChanged && isServiceReady()) {
+                    LogUtil.transport("Effective MTU changed; recreating TUN")
+                    scheduleNetworkReload(delayMs = 200L, recreateTun = true)
+                } else if (previous != null && previous != fingerprint) {
+                    // bindProcessToNetwork() already follows the current network.
+                    // Route snapshots alone do not invalidate existing sockets and
+                    // are routinely emitted in bursts by Android. In particular,
+                    // reloading the core here recreates every custom-profile
+                    // observatory probe and can flood the server with probe URLs.
+                    LogUtil.transport("Link routes changed; keeping current core")
                 }
             }
 
@@ -128,16 +199,25 @@ class CoreVpnService : VpnService(), ServiceControl {
                 if (currentUnderlyingNetwork != network) return
                 val unblocked = lastNetworkBlocked && !blocked
                 lastNetworkBlocked = blocked
-                if (unblocked && isRunning) {
+                LogUtil.transport("Network blocked state=$blocked network=$network")
+                if (unblocked && isServiceReady()) {
                     scheduleNetworkReload()
                 }
             }
 
             override fun onLost(network: Network) {
                 if (currentUnderlyingNetwork == network) {
+                    LogUtil.transport("Active underlying network lost=$network")
                     currentUnderlyingNetwork = null
                     lastLinkFingerprint = null
                     hasCapabilitySnapshot = false
+                    linkPropertiesReady = false
+                    pendingUnderlyingSwitch = false
+                    lastUnderlyingMtu = 0
+                    lastTransportDescription = "unknown"
+                    if (SettingsManager.isAdaptiveMtuEnabled()) SettingsManager.setRuntimeVpnMtu(null)
+                    networkReloadJob?.cancel()
+                    networkReloadJob = null
                     applyUnderlyingNetwork(null)
                 }
             }
@@ -147,8 +227,6 @@ class CoreVpnService : VpnService(), ServiceControl {
     override fun onCreate() {
         super.onCreate()
         LogUtil.i(AppConfig.TAG, "StartCore-VPN: Service created")
-        val policy = StrictMode.ThreadPolicy.Builder().permitAll().build()
-        StrictMode.setThreadPolicy(policy)
         CoreServiceManager.serviceControl = SoftReference(this)
     }
 
@@ -187,8 +265,34 @@ class CoreVpnService : VpnService(), ServiceControl {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         LogUtil.i(AppConfig.TAG, "StartCore-VPN: Service command received")
         NotificationManager.showNotification(null)
-        setupVpnService()
-        startService()
+
+        val shouldStart = synchronized(lifecycleLock) {
+            if (serviceState != ServiceState.STOPPED) {
+                false
+            } else {
+                serviceState = ServiceState.STARTING
+                true
+            }
+        }
+        if (!shouldStart) {
+            LogUtil.i(AppConfig.TAG, "StartCore-VPN: Ignoring duplicate start in state $serviceState")
+            return START_STICKY
+        }
+
+        // Building a config can perform DNS and disk I/O. Keep it away from the
+        // service main thread so a slow resolver cannot cause a service ANR.
+        serviceScope.launch {
+            synchronized(lifecycleLock) {
+                if (serviceState != ServiceState.STARTING) return@synchronized
+                if (!setupVpnService()) {
+                    serviceState = ServiceState.STOPPED
+                    NotificationManager.cancelNotification()
+                    stopSelf()
+                    return@synchronized
+                }
+                startService()
+            }
+        }
         return START_STICKY
         //return super.onStartCommand(intent, flags, startId)
     }
@@ -210,15 +314,19 @@ class CoreVpnService : VpnService(), ServiceControl {
 
         // Start LAN sharing if enabled in settings
         RootLanSharing.startClientSharing(this)
+        serviceState = ServiceState.RUNNING
     }
 
     override fun stopService() {
         stopAllService(true)
     }
 
-    override fun reloadService() {
+    override fun reloadService(force: Boolean) {
         serviceScope.launch {
-            reloadCoreKeepingTun("profile change", skipIfSelectedAlreadyRunning = true)
+            reloadCoreKeepingTun(
+                reason = if (force) "active priority route change" else "profile change",
+                skipIfSelectedAlreadyRunning = !force,
+            )
         }
     }
 
@@ -237,21 +345,20 @@ class CoreVpnService : VpnService(), ServiceControl {
      * Sets up the VPN service.
      * Prepares the VPN and configures it if preparation is successful.
      */
-    private fun setupVpnService() {
+    private fun setupVpnService(): Boolean {
         val prepare = prepare(this)
         if (prepare != null) {
             LogUtil.e(AppConfig.TAG, "StartCore-VPN: Permission not granted")
-            stopSelf()
-            return
+            return false
         }
 
         if (configureVpnService() != true) {
             LogUtil.e(AppConfig.TAG, "StartCore-VPN: Configuration failed")
-            stopSelf()
-            return
+            return false
         }
 
         runTun2socks()
+        return true
     }
 
     /**
@@ -286,7 +393,6 @@ class CoreVpnService : VpnService(), ServiceControl {
             return true
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to establish VPN interface", e)
-            stopAllService()
         }
         return false
     }
@@ -302,7 +408,7 @@ class CoreVpnService : VpnService(), ServiceControl {
         val bypassLan = SettingsManager.routingRulesetsBypassLan()
 
         // Configure IPv4 settings
-        builder.setMtu(SettingsManager.getVpnMtu())
+        builder.setMtu(SettingsManager.getEffectiveVpnMtu())
         builder.addAddress(vpnConfig.ipv4Client, 30)
 
         // Configure routing rules
@@ -428,12 +534,66 @@ class CoreVpnService : VpnService(), ServiceControl {
         tun2SocksService?.startTun2Socks()
     }
 
-    private fun scheduleNetworkReload() {
+    private fun isServiceReady(): Boolean = serviceState == ServiceState.RUNNING
+
+    private fun scheduleValidatedNetworkReloadIfReady() {
+        if (!pendingUnderlyingSwitch || !hasCapabilitySnapshot || !linkPropertiesReady || !lastNetworkValidated) {
+            return
+        }
+        pendingUnderlyingSwitch = false
+        // Recreate the complete VPN path. Reusing the same TUN descriptor can
+        // leave a stale user-space TCP state after rapid LTE/Wi-Fi flapping.
+        scheduleNetworkReload(
+            delayMs = 150L,
+            recreateTun = true,
+        )
+    }
+
+    private fun scheduleNetworkReload(
+        delayMs: Long = 220L,
+        consumePendingSwitch: Boolean = true,
+        recreateTun: Boolean = false,
+    ) {
+        val targetNetwork = currentUnderlyingNetwork
+        if (!recreateTun) {
+            val now = SystemClock.elapsedRealtime()
+            val remaining = SAME_NETWORK_RELOAD_COOLDOWN_MS - (now - lastSoftNetworkReloadAt)
+            if (targetNetwork != null && targetNetwork == lastSoftReloadNetwork &&
+                lastSoftNetworkReloadAt != 0L && remaining > 0L
+            ) {
+                LogUtil.transport(
+                    "Skipping duplicate soft reload for network=$targetNetwork; " +
+                        "cooldown=${remaining}ms"
+                )
+                return
+            }
+        }
         networkReloadJob?.cancel()
         networkReloadJob = serviceScope.launch {
-            // Collapse the callback burst and let Android install the new link routes.
-            delay(150)
-            reloadCoreKeepingTun("underlying network changed")
+            // Collapse Android's ordered callback burst and let it install routes.
+            delay(delayMs)
+            if (currentUnderlyingNetwork != targetNetwork) {
+                LogUtil.transport(
+                    "Discarding stale reconnect for network=$targetNetwork; " +
+                        "current=$currentUnderlyingNetwork"
+                )
+                return@launch
+            }
+            if (consumePendingSwitch || pendingUnderlyingSwitch) {
+                pendingUnderlyingSwitch = false
+            }
+            if (recreateTun) {
+                LogUtil.transport("Recreating TUN after transport change")
+                recreateTunAfterTransportChange()
+            } else {
+                // The cooldown belongs to this exact Android Network. A real
+                // LTE/Wi-Fi transition has a different Network identity and
+                // must never be suppressed by a recent reload of the old one.
+                lastSoftReloadNetwork = targetNetwork
+                lastSoftNetworkReloadAt = SystemClock.elapsedRealtime()
+                LogUtil.transport("Reconnecting tunnel after network event on $targetNetwork")
+                reloadCoreKeepingTun("underlying network changed")
+            }
         }
     }
 
@@ -448,16 +608,86 @@ class CoreVpnService : VpnService(), ServiceControl {
         }
     }
 
-    private fun reloadCoreKeepingTun(reason: String, skipIfSelectedAlreadyRunning: Boolean = false) {
+    private fun describeTransport(capabilities: NetworkCapabilities): String = when {
+        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "LTE/5G"
+        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+        else -> "other"
+    }
+
+    /**
+     * Uses the actual link MTU when Android provides one. Cellular paths get a
+     * conservative ceiling because encapsulated VPN traffic otherwise risks
+     * black-holed fragments on some carriers. The feature is opt-in.
+     */
+    private fun updateAdaptiveMtu(linkProperties: LinkProperties): Boolean {
+        if (!SettingsManager.isAdaptiveMtuEnabled()) return false
+        val manual = SettingsManager.getVpnMtu()
+        val linkMtu = linkProperties.mtu.takeIf { it in 1280..9_000 } ?: manual
+        val cellularCeiling = if (lastTransportDescription == "LTE/5G") 1400 else manual
+        val effective = minOf(manual, linkMtu, cellularCeiling).coerceAtLeast(1280)
+        return SettingsManager.setRuntimeVpnMtu(effective)
+    }
+
+    private fun reloadCoreKeepingTun(
+        reason: String,
+        skipIfSelectedAlreadyRunning: Boolean = false,
+    ) {
         synchronized(lifecycleLock) {
-            if (!isRunning || !::mInterface.isInitialized) return
+            if (!isRunning || !::mInterface.isInitialized || serviceState != ServiceState.RUNNING) return
             if (skipIfSelectedAlreadyRunning && CoreServiceManager.isSelectedProfileRunning()) return
 
-            LogUtil.i(AppConfig.TAG, "StartCore-VPN: Soft reload ($reason)")
+            serviceState = ServiceState.RELOADING
+            LogUtil.transport("Soft reload ($reason)")
             if (!CoreServiceManager.reloadCoreLoop(mInterface)) {
                 LogUtil.e(AppConfig.TAG, "StartCore-VPN: Soft reload failed; stopping safely")
                 stopAllServiceLocked(true)
+            } else {
+                serviceState = ServiceState.RUNNING
             }
+        }
+    }
+
+    /**
+     * Rebuilds the Android VPN interface after Wi-Fi/LTE handover.
+     *
+     * Keeping a TUN interface is normally less disruptive, but it cannot
+     * migrate an already-open Telegram TCP connection to a different source
+     * address. Closing it makes Android drop that stale flow immediately;
+     * Telegram then reconnects through a freshly bound interface.
+     */
+    private fun recreateTunAfterTransportChange() {
+        synchronized(lifecycleLock) {
+            if (!isRunning || !::mInterface.isInitialized || serviceState != ServiceState.RUNNING) return
+            val startedAt = System.nanoTime()
+            serviceState = ServiceState.RELOADING
+            LogUtil.transport(
+                "Hard reconnect (recreate TUN), transport=$lastTransportDescription " +
+                    "underlyingMtu=$lastUnderlyingMtu effectiveMtu=${SettingsManager.getEffectiveVpnMtu()}"
+            )
+
+            // Leave the network callback registered: it already points at the
+            // new transport. Only the old interface and its sockets are reset.
+            tun2SocksService?.stopTun2Socks()
+            tun2SocksService = null
+            // A Wi-Fi/LTE handover must keep the current priority route. Starting
+            // again from P0 adds an unnecessary failed probe and reconnect delay.
+            CoreServiceManager.stopCoreLoop(preservePriorityState = true)
+            try {
+                mInterface.close()
+            } catch (e: Exception) {
+                LogUtil.w(AppConfig.TAG, "StartCore-VPN: Failed to close old TUN", e)
+            }
+            isRunning = false
+
+            if (!setupVpnService()) {
+                LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to recreate TUN after transport change")
+                stopAllServiceLocked(true)
+                return
+            }
+            startService()
+            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
+            LogUtil.transport("Hard reconnect completed in ${elapsedMs}ms, state=$serviceState")
         }
     }
 
@@ -472,6 +702,7 @@ class CoreVpnService : VpnService(), ServiceControl {
 //        val emptyInfo = VpnNetworkInfo()
 //        val info = loadVpnNetworkInfo(configName, emptyInfo)!! + (lastNetworkInfo ?: emptyInfo)
 //        saveVpnNetworkInfo(configName, info)
+        serviceState = ServiceState.STOPPING
         isRunning = false
         networkReloadJob?.cancel()
         networkReloadJob = null
@@ -491,6 +722,10 @@ class CoreVpnService : VpnService(), ServiceControl {
         hasCapabilitySnapshot = false
         lastNetworkValidated = false
         lastNetworkBlocked = false
+        linkPropertiesReady = false
+        pendingUnderlyingSwitch = false
+        lastSoftNetworkReloadAt = 0L
+        lastSoftReloadNetwork = null
         applyUnderlyingNetwork(null)
 
         tun2SocksService?.stopTun2Socks()
@@ -517,6 +752,6 @@ class CoreVpnService : VpnService(), ServiceControl {
                 LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to close interface", e)
             }
         }
+        serviceState = ServiceState.STOPPED
     }
 }
-

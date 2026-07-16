@@ -15,7 +15,7 @@ import java.security.MessageDigest
 
 class UserAssetViewModel : ViewModel() {
     private val assets = mutableListOf<AssetUrlCache>()
-    private val builtInGeoFiles = listOf(AppConfig.GEOSITE_DAT, AppConfig.GEOIP_DAT, AppConfig.GEOIP_ONLY_CN_PRIVATE_DAT)
+    private val builtInGeoFiles = listOf(AppConfig.GEOSITE_DAT, AppConfig.GEOIP_DAT)
 
     val itemCount: Int
         get() = assets.size
@@ -47,12 +47,11 @@ class UserAssetViewModel : ViewModel() {
                     )
                 )
             }
-        // Keep the two primary databases on a complete V2Fly-compatible source.
+        // Keep the two primary databases on the same pinned source as the APK.
         return (builtInItems + savedAssets).map { cache ->
             val canonicalUrl = when (cache.assetUrl.remarks) {
                 AppConfig.GEOSITE_DAT -> AppConfig.GEOSITE_DAT_URL
                 AppConfig.GEOIP_DAT -> AppConfig.GEOIP_DAT_URL
-                AppConfig.GEOIP_ONLY_CN_PRIVATE_DAT -> AppConfig.GEOIP_ONLY_CN_PRIVATE_URL
                 else -> null
             }
             if (canonicalUrl != null) {
@@ -114,7 +113,7 @@ class UserAssetViewModel : ViewModel() {
                     targetTemp
                 )
             ) {
-                if (!verifyChecksum(item, targetTemp, httpPort, proxyUsername, proxyPassword)) {
+                if (!verifyChecksum(item, targetTemp)) {
                     LogUtil.e(AppConfig.TAG, "Geo checksum verification failed: ${item.remarks}")
                     return false
                 }
@@ -134,25 +133,12 @@ class UserAssetViewModel : ViewModel() {
     private fun verifyChecksum(
         item: AssetUrlItem,
         file: File,
-        httpPort: Int,
-        proxyUsername: String?,
-        proxyPassword: String?
     ): Boolean {
-        val checksumUrl = when (item.remarks) {
-            AppConfig.GEOSITE_DAT -> AppConfig.GEOSITE_DAT_CHECKSUM_URL
-            AppConfig.GEOIP_DAT -> AppConfig.GEOIP_DAT_CHECKSUM_URL
+        val expected = when (item.remarks) {
+            AppConfig.GEOSITE_DAT -> AppConfig.GEOSITE_DAT_SHA256
+            AppConfig.GEOIP_DAT -> AppConfig.GEOIP_DAT_SHA256
             else -> return true
-        }
-        val content = HttpUtil.getUrlContent(
-            UrlContentRequest(
-                url = checksumUrl,
-                timeout = 15_000,
-                httpPort = httpPort,
-                proxyUsername = proxyUsername,
-                proxyPassword = proxyPassword
-            )
-        ) ?: return false
-        val expected = content.trim().substringBefore(' ').lowercase()
+        }.lowercase()
         if (!expected.matches(Regex("[0-9a-f]{64}"))) return false
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->

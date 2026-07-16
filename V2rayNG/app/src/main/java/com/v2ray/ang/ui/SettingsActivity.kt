@@ -6,14 +6,18 @@ import androidx.lifecycle.lifecycleScope
 import androidx.preference.CheckBoxPreference
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
+import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
+import androidx.appcompat.app.AlertDialog
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.VPN
 import com.v2ray.ang.R
+import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.helper.MmkvPreferenceDataStore
 import com.v2ray.ang.root.RootManager
+import com.v2ray.ang.core.ConnectionJournal
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.launch
 
@@ -61,6 +65,8 @@ class SettingsActivity : BaseActivity() {
         private val socksPassword by lazy { findPreference<EditTextPreference>(AppConfig.PREF_SOCKS_PASSWORD) }
         private val socksEnableUdp by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_SOCKS_ENABLE_UDP) }
         private val proxySharing by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_PROXY_SHARING) }
+        private val connectionDiagnostics by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_CONNECTION_DIAGNOSTICS_ENABLED) }
+        private val connectionJournal by lazy { findPreference<Preference>(AppConfig.PREF_CONNECTION_JOURNAL) }
 
         override fun onCreatePreferences(bundle: Bundle?, s: String?) {
             // Use MMKV as the storage backend for all Preferences
@@ -70,6 +76,35 @@ class SettingsActivity : BaseActivity() {
             addPreferencesFromResource(R.xml.pref_settings)
 
             initPreferenceSummaries()
+
+            fun updateConnectionJournalAvailability(enabled: Boolean) {
+                connectionJournal?.isEnabled = enabled
+                connectionJournal?.summary = if (enabled) "Показать соединения, зафиксированные с момента включения." else "Сначала включите диагностику приложений."
+            }
+            updateConnectionJournalAvailability(connectionDiagnostics?.isChecked == true)
+            connectionDiagnostics?.setOnPreferenceChangeListener { _, value ->
+                val enabled = value as Boolean
+                if (enabled) ConnectionJournal.clear()
+                updateConnectionJournalAvailability(enabled)
+                // The extra diagnostic routing rule is part of the generated
+                // Xray JSON, so reload a running core after the preference has
+                // been persisted by Preference.
+                requireActivity().window.decorView.post {
+                    if (CoreServiceManager.isRunning()) {
+                        CoreServiceManager.reloadVService(requireContext())
+                    }
+                }
+                true
+            }
+            connectionJournal?.setOnPreferenceClickListener {
+                AlertDialog.Builder(requireContext())
+                    .setTitle("Журнал соединений")
+                    .setMessage(ConnectionJournal.summary())
+                    .setNegativeButton("Закрыть", null)
+                    .setPositiveButton("Очистить") { _, _ -> ConnectionJournal.clear() }
+                    .show()
+                true
+            }
 
             localDns?.setOnPreferenceChangeListener { _, any ->
                 updateLocalDns(any as Boolean)

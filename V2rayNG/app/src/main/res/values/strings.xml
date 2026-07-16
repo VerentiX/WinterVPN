@@ -51,6 +51,7 @@
     <string name="local_profiles_name">Local profiles</string>
     <string name="subscription_profile_count">%1$d configurations — tap to expand</string>
     <string name="subscription_profile_count_expanded">%1$d configurations — tap to collapse</string>
+    <string name="title_view_config">View configuration</string>
     <string name="menu_item_add_config">Add config</string>
     <string name="menu_item_save_config">Save config</string>
     <string name="menu_item_edit_config">Edit config</string>
@@ -240,6 +241,12 @@
     <string name="title_pref_vpn_interface_address">VPN Interface Address</string>
 
     <string name="title_pref_vpn_mtu">VPN MTU (default 1500)</string>
+    <string name="title_pref_adaptive_mtu">Adaptive MTU</string>
+    <string name="summary_pref_adaptive_mtu">Use a safer MTU for the active mobile or Wi-Fi network. Reconnect VPN after changing this setting.</string>
+    <string name="title_pref_notification_show_mtu">Show MTU in notification</string>
+    <string name="summary_pref_notification_show_mtu">Show the current effective VPN MTU while connected.</string>
+    <string name="title_pref_notification_show_active_outbound">Show active route in notification</string>
+    <string name="summary_pref_notification_show_active_outbound">Show the route that carried the most recent proxy traffic.</string>
 
 
     <string name="title_pref_domestic_dns">Domestic DNS (Optional)</string>
@@ -421,6 +428,13 @@
     <string name="update_download_started">Update download started. Android will offer installation when it is ready.</string>
     <string name="update_install_permission">Allow this app to install updates, then tap Update again.</string>
     <string name="update_download_complete">Version %1$s is downloaded. Tap to install it.</string>
+    <string name="update_download_preparing">Preparing update download…</string>
+    <string name="update_download_progress">Downloading update: %1$d%% · %2$s / %3$s</string>
+    <string name="update_download_progress_unknown">Downloading update: %1$s</string>
+    <string name="update_download_paused">Update download is paused…</string>
+    <string name="update_download_failed">Could not download the update (error %1$d).</string>
+    <string name="update_download_installing">Download complete. Opening Android installer…</string>
+    <string name="update_install_launch_failed">Could not open the Android installer.</string>
     <string name="update_available_notification">A new version %1$s is available. Tap to view the update.</string>
 
     <string name="title_policy_group_type">Policy group type</string>

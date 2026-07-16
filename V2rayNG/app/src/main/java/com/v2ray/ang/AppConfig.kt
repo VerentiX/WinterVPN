@@ -33,6 +33,11 @@ object AppConfig {
     const val PREF_VPN_BYPASS_LAN = "pref_vpn_bypass_lan"
     const val PREF_VPN_INTERFACE_ADDRESS_CONFIG_INDEX = "pref_vpn_interface_address_config_index"
     const val PREF_VPN_MTU = "pref_vpn_mtu"
+    const val PREF_ADAPTIVE_MTU_ENABLED = "pref_adaptive_mtu_enabled"
+    const val PREF_NOTIFICATION_SHOW_MTU = "pref_notification_show_mtu"
+    const val PREF_NOTIFICATION_SHOW_ACTIVE_OUTBOUND = "pref_notification_show_active_outbound"
+    const val PREF_CONNECTION_DIAGNOSTICS_ENABLED = "pref_connection_diagnostics_enabled"
+    const val PREF_CONNECTION_JOURNAL = "pref_connection_journal"
     const val PREF_ROUTING_DOMAIN_STRATEGY = "pref_routing_domain_strategy"
     const val PREF_ROUTING_RULESET = "pref_routing_ruleset"
     const val PREF_MUX_ENABLED = "pref_mux_enabled"
@@ -78,6 +83,7 @@ object AppConfig {
     const val PREF_CHECK_UPDATE_PRE_RELEASE = "pref_check_update_pre_release"
     const val PREF_GEO_FILES_SOURCES = "pref_geo_files_sources"
     const val PREF_GEO_BOOTSTRAP_COMPLETE = "pref_zima_geo_bootstrap_complete_v5"
+    const val PREF_BUNDLED_GEO_REVISION = "pref_zima_bundled_geo_revision"
     const val PREF_USE_HEV_TUNNEL = "pref_use_hev_tunnel_v2"
     const val PREF_HEV_TUNNEL_LOGLEVEL = "pref_hev_tunnel_loglevel"
     const val PREF_HEV_TUNNEL_RW_TIMEOUT = "pref_hev_tunnel_rw_timeout_v2"
@@ -146,15 +152,26 @@ object AppConfig {
 
     /** Geo data file names. */
     const val GEOSITE_DAT = "geosite.dat"
+    const val GEOSITE_COMPAT_DAT = "geosite-compat.dat"
     const val GEOIP_DAT = "geoip.dat"
+    const val GEOIP_COMPAT_DAT = "geoip-compat.dat"
     const val GEOIP_ONLY_CN_PRIVATE_DAT = "geoip-only-cn-private.dat"
-    // Full V2Fly-compatible databases plus Russia-specific lists. Unlike the previous
-    // reduced databases, these contain standard categories such as geosite:google.
-    const val GEO_DATA_BASE_URL = "$GITHUB_RAW_URL/runetfreedom/russia-v2ray-rules-dat/release"
-    const val GEOSITE_DAT_URL = "$GEO_DATA_BASE_URL/$GEOSITE_DAT"
-    const val GEOIP_DAT_URL = "$GEO_DATA_BASE_URL/$GEOIP_DAT"
-    const val GEOSITE_DAT_CHECKSUM_URL = "$GEOSITE_DAT_URL.sha256sum"
-    const val GEOIP_DAT_CHECKSUM_URL = "$GEOIP_DAT_URL.sha256sum"
+    // Full V2Ray/Xray databases keep both standard V2Fly categories and common
+    // service categories (Telegram, Google, Cloudflare, etc.) available to
+    // imported subscriptions as well as bundled routing presets.
+    const val BUNDLED_GEO_REVISION = "runetfreedom-202607151651-87706f95-roscomvpn-202607150539-202604152235"
+    const val GEOIP_DAT_URL =
+        "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/87706f95f550f3f985da8c11ade3177be1f582f0/$GEOIP_DAT"
+    const val GEOSITE_DAT_URL =
+        "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/87706f95f550f3f985da8c11ade3177be1f582f0/$GEOSITE_DAT"
+    const val GEOSITE_COMPAT_DAT_URL =
+        "https://raw.githubusercontent.com/hydraponique/roscomvpn-geosite/2041bdc2748776fd083ea3bb8790eab14a7aed25/geosite.dat"
+    const val GEOIP_COMPAT_DAT_URL =
+        "https://raw.githubusercontent.com/hydraponique/roscomvpn-geoip/0c0cc60cfb07c17d0888df772000ffc8e8d76145/geoip.dat"
+    const val GEOIP_DAT_SHA256 = "b9f84648ec798e2c2ce4b2991a2891ed433689943aaefb098592177cf4ed789a"
+    const val GEOSITE_DAT_SHA256 = "a50be2b9c557e87faf9eb4d40371ffcdad7777565eeb4aa1078ae1e06e18bd25"
+    const val GEOSITE_COMPAT_DAT_SHA256 = "765b86e4b6aed5da1a206304b5500c7668687fa1df8e8322c8a4961e1b672190"
+    const val GEOIP_COMPAT_DAT_SHA256 = "10056efb313bc89245e7900716a35e6afbe087284b14a0680b9ece6bd24544cb"
     const val GEOIP_ONLY_CN_PRIVATE_URL = "$GITHUB_RAW_URL/Loyalsoldier/geoip/release/$GEOIP_ONLY_CN_PRIVATE_DAT"
 
     /** Ports and addresses for various services. */

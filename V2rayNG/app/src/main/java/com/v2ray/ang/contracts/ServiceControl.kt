@@ -20,7 +20,7 @@ interface ServiceControl {
     fun stopService()
 
     /** Reloads only the proxy core while keeping the surrounding service alive. */
-    fun reloadService()
+    fun reloadService(force: Boolean = false)
 
     /**
      * Protects the VPN socket.

@@ -38,6 +38,8 @@ import java.util.Locale
 import kotlin.random.Random
 
 object SettingsManager {
+    @Volatile
+    private var runtimeVpnMtu: Int? = null
 
     @Volatile
     private var runtimeSocksPort: Int? = null
@@ -380,25 +382,116 @@ object SettingsManager {
      * @param context The application context.
      * @param assets The AssetManager.
      */
+    @Synchronized
     fun initAssets(context: Context, assets: AssetManager) {
-        val extFolder = Utils.userAssetPath(context)
+        val extFolder = File(Utils.userAssetPath(context))
 
         try {
-            val geo = arrayOf(AppConfig.GEOSITE_DAT, AppConfig.GEOIP_DAT, AppConfig.GEOIP_ONLY_CN_PRIVATE_DAT)
-            assets.list("")
-                ?.filter { geo.contains(it) }
-                ?.filter { !File(extFolder, it).exists() }
-                ?.forEach {
-                    val target = File(extFolder, it)
-                    assets.open(it).use { input ->
-                        FileOutputStream(target).use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    LogUtil.i(AppConfig.TAG, "Copied from apk assets folder to ${target.absolutePath}")
-                }
+            if (!extFolder.exists() && !extFolder.mkdirs()) {
+                error("Unable to create asset directory: ${extFolder.absolutePath}")
+            }
+
+            val geoNames = setOf(
+                AppConfig.GEOSITE_DAT,
+                AppConfig.GEOSITE_COMPAT_DAT,
+                AppConfig.GEOIP_DAT,
+                AppConfig.GEOIP_COMPAT_DAT
+            )
+            val bundledNames = assets.list("")
+                .orEmpty()
+                .filter { it in geoNames }
+            if (bundledNames.isEmpty()) return
+
+            val installedRevision = MmkvManager.decodeSettingsString(
+                AppConfig.PREF_BUNDLED_GEO_REVISION
+            )
+            val revisionChanged = installedRevision != AppConfig.BUNDLED_GEO_REVISION
+            val namesToInstall = bundledNames.filter { name ->
+                val target = File(extFolder, name)
+                revisionChanged || !target.isFile || target.length() == 0L
+            }
+
+            if (namesToInstall.isNotEmpty()) {
+                installBundledAssetsAtomically(assets, extFolder, namesToInstall)
+            }
+
+            val completeGeoAssetsInstalled = listOf(
+                AppConfig.GEOSITE_DAT,
+                AppConfig.GEOSITE_COMPAT_DAT,
+                AppConfig.GEOIP_DAT,
+                AppConfig.GEOIP_COMPAT_DAT
+            )
+                .all { name -> File(extFolder, name).let { it.isFile && it.length() > 0L } }
+            if (completeGeoAssetsInstalled) {
+                MmkvManager.encodeSettings(
+                    AppConfig.PREF_BUNDLED_GEO_REVISION,
+                    AppConfig.BUNDLED_GEO_REVISION
+                )
+                // The app is immediately usable from its APK assets. A network download is
+                // now an optional update, not a first-launch requirement.
+                MmkvManager.encodeSettings(AppConfig.PREF_GEO_BOOTSTRAP_COMPLETE, true)
+            }
         } catch (e: Exception) {
             LogUtil.e(ANG_PACKAGE, "asset copy failed", e)
+        }
+    }
+
+    private fun installBundledAssetsAtomically(
+        assets: AssetManager,
+        extFolder: File,
+        names: List<String>
+    ) {
+        data class InstallEntry(
+            val target: File,
+            val staged: File,
+            val backup: File
+        )
+
+        val entries = names.map { name ->
+            val target = File(extFolder, name)
+            val staged = File(extFolder, ".$name.apk-staged")
+            val backup = File(extFolder, ".$name.apk-previous")
+            staged.delete()
+            backup.delete()
+            assets.open(name).use { input ->
+                FileOutputStream(staged).use { output ->
+                    input.copyTo(output)
+                    output.fd.sync()
+                }
+            }
+            check(staged.length() > 0L) { "Bundled asset is empty: $name" }
+            InstallEntry(target, staged, backup)
+        }
+
+        try {
+            entries.forEach { entry ->
+                if (entry.target.exists() && !entry.target.renameTo(entry.backup)) {
+                    error("Unable to back up ${entry.target.name}")
+                }
+            }
+            entries.forEach { entry ->
+                if (!entry.staged.renameTo(entry.target)) {
+                    error("Unable to install ${entry.target.name}")
+                }
+                LogUtil.i(
+                    AppConfig.TAG,
+                    "Installed bundled geo asset ${entry.target.name} (${entry.target.length()} bytes)"
+                )
+            }
+            entries.forEach { it.backup.delete() }
+        } catch (e: Exception) {
+            entries.forEach { entry ->
+                if (entry.backup.exists()) {
+                    entry.target.delete()
+                    entry.backup.renameTo(entry.target)
+                }
+            }
+            throw e
+        } finally {
+            entries.forEach { entry ->
+                entry.staged.delete()
+                entry.backup.delete()
+            }
         }
     }
 
@@ -514,6 +607,20 @@ object SettingsManager {
      */
     fun getVpnMtu(): Int {
         return Utils.parseInt(MmkvManager.decodeSettingsString(AppConfig.PREF_VPN_MTU), AppConfig.VPN_MTU)
+    }
+
+    /** MTU selected for the currently active Android network, or the manual value. */
+    fun getEffectiveVpnMtu(): Int = runtimeVpnMtu ?: getVpnMtu()
+
+    fun isAdaptiveMtuEnabled(): Boolean =
+        MmkvManager.decodeSettingsBool(AppConfig.PREF_ADAPTIVE_MTU_ENABLED, false) == true
+
+    /** @return true only when the effective MTU actually changed. */
+    fun setRuntimeVpnMtu(mtu: Int?): Boolean {
+        val normalized = mtu?.coerceIn(1280, AppConfig.VPN_MTU)
+        val changed = runtimeVpnMtu != normalized
+        runtimeVpnMtu = normalized
+        return changed
     }
 
     /**

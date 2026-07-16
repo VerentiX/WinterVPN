@@ -111,6 +111,24 @@
             android:title="@string/title_pref_vpn_mtu" />
 
         <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="pref_adaptive_mtu_enabled"
+            android:summary="@string/summary_pref_adaptive_mtu"
+            android:title="@string/title_pref_adaptive_mtu" />
+
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="pref_notification_show_mtu"
+            android:summary="@string/summary_pref_notification_show_mtu"
+            android:title="@string/title_pref_notification_show_mtu" />
+
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="pref_notification_show_active_outbound"
+            android:summary="@string/summary_pref_notification_show_active_outbound"
+            android:title="@string/title_pref_notification_show_active_outbound" />
+
+        <CheckBoxPreference
             android:defaultValue="true"
             android:key="pref_use_hev_tunnel_v2"
             android:summary="@string/summary_pref_use_hev_tunnel"
@@ -215,6 +233,17 @@
             android:key="pref_outbound_domain_resolve_method"
             android:summary="%s"
             android:title="@string/title_outbound_domain_resolve_method" />
+
+        <CheckBoxPreference
+            android:key="pref_connection_diagnostics_enabled"
+            android:defaultValue="false"
+            android:title="Диагностика приложений"
+            android:summary="Определять приложение, создавшее соединение. Повышает расход батареи." />
+
+        <Preference
+            android:key="pref_connection_journal"
+            android:title="Открыть журнал соединений"
+            android:summary="Доступно после включения диагностики приложений." />
 
     </PreferenceCategory>
 

@@ -3,8 +3,7 @@ package com.v2ray.ang.core
 import android.content.Context
 import android.text.TextUtils
 import com.google.gson.JsonArray
-import com.google.gson.JsonElement
-import com.google.gson.JsonPrimitive
+import com.google.gson.JsonObject
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.ConfigResult
 import com.v2ray.ang.dto.CoreConfigContext
@@ -26,16 +25,31 @@ import com.v2ray.ang.util.Utils
 object CoreConfigManager {
     private var initConfigCache: String? = null
     private var initConfigCacheWithTun: String? = null
-
-    // Compatibility for subscriptions generated for the former Roscom-only databases.
-    // Rewrites happen only in the ephemeral runtime JSON; imported profiles stay untouched.
-    private val geoDataAliases = mapOf(
-        "geosite:category-ads" to "geosite:category-ads-all",
-        "geosite:whitelist" to "geosite:ru-available-only-inside",
-        "geosite:twitch-ads" to "geosite:twitch",
-        "geosite:torrent" to "regexp:(?i).*(torrent|tracker).*",
-        "geoip:direct" to "geoip:ru",
+    private val roscomGeoSiteCategories = setOf(
+        "whitelist",
+        "category-ru",
+        "category-geoblock-ru",
+        "apple",
+        "google-play",
+        "google-deepmind",
+        "microsoft",
+        "github",
+        "telegram",
+        "youtube",
+        "twitch",
+        "twitch-ads",
+        "pinterest",
+        "steam",
+        "epic-games",
+        "riot",
+        "escapefromtarkov",
+        "faceit",
+        "category-ads",
+        "win-spy",
+        "private",
+        "torrent"
     )
+    private val roscomGeoIpCategories = setOf("direct", "whitelist", "private")
 
     //region get config function
 
@@ -95,7 +109,9 @@ object CoreConfigManager {
             ?: return ConfigResult(status = false, guid = configContext.guid, errorMessage = "Custom config is empty")
         val json = JsonUtil.parseString(raw)?.takeIf { it.isJsonObject }?.asJsonObject
             ?: return ConfigResult(true, configContext.guid, raw)
-        rewriteGeoDataAliases(json)
+        applyConnectionDiagnosticsRule(json)
+        keepCustomInboundDestination(json)
+        applyGeoRuleCompatibility(json)
         val compatibleRaw = JsonUtil.toJsonPretty(json) ?: raw
         val result = ConfigResult(true, configContext.guid, compatibleRaw)
         if (!needTun()) {
@@ -133,12 +149,91 @@ object CoreConfigManager {
             // add tun inbound from template
             val templateConfig = initV2rayConfig(configContext)
             templateConfig.inbounds.firstOrNull { it.tag == "tun" }?.let { inboundTun ->
-                inboundTun.settings?.mtu = SettingsManager.getVpnMtu()
+                inboundTun.settings?.mtu = SettingsManager.getEffectiveVpnMtu()
                 inboundsJson.add(JsonUtil.parseString(JsonUtil.toJson(inboundTun)))
             }
         }
 
         return JsonUtil.toJsonPretty(json)?.let { ConfigResult(true, configContext.guid, it) } ?: result
+    }
+
+    /**
+     * Custom subscriptions commonly enable HTTP/TLS/QUIC sniffing without
+     * routeOnly. In that mode Xray replaces an inbound's original destination
+     * with a sniffed hostname before forwarding it. Keeping the original IP
+     * avoids accidental destination replacement while preserving domain-based
+     * routing decisions. FakeDNS remains an exception handled by Xray itself.
+     */
+    private fun keepCustomInboundDestination(json: JsonObject) {
+        val inbounds = json.getAsJsonArray("inbounds") ?: return
+        inbounds.forEach { element ->
+            val inbound = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val sniffing = inbound.get("sniffing")
+                ?.takeIf { it.isJsonObject }
+                ?.asJsonObject
+                ?: return@forEach
+            if (sniffing.get("enabled")?.asBoolean == true) {
+                sniffing.addProperty("routeOnly", true)
+            }
+        }
+    }
+
+    /**
+     * The primary GeoSite database is the broad V2Fly-compatible set.  A small
+     * companion databases preserve RoscomVPN categories which are not guaranteed
+     * by the standard sets, so imported subscriptions still load unchanged.
+     */
+    private fun applyGeoRuleCompatibility(json: JsonObject) {
+        val rules = json.getAsJsonObject("routing")
+            ?.getAsJsonArray("rules")
+            ?: return
+        rules.forEach { element ->
+            val rule = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            rule.getAsJsonArray("domain")?.let { domains ->
+                rule.add(
+                    "domain",
+                    rewriteGeoRules(
+                        domains,
+                        "geosite:",
+                        AppConfig.GEOSITE_COMPAT_DAT,
+                        roscomGeoSiteCategories
+                    )
+                )
+            }
+            rule.getAsJsonArray("ip")?.let { ips ->
+                rule.add(
+                    "ip",
+                    rewriteGeoRules(
+                        ips,
+                        "geoip:",
+                        AppConfig.GEOIP_COMPAT_DAT,
+                        roscomGeoIpCategories
+                    )
+                )
+            }
+        }
+    }
+
+    private fun rewriteGeoRules(
+        values: JsonArray,
+        prefix: String,
+        compatibilityFile: String,
+        compatibilityCategories: Set<String>
+    ): JsonArray = JsonArray().apply {
+        values.forEach { value ->
+            val jsonValue = value as com.google.gson.JsonElement
+            val code = jsonValue
+                .takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+                ?.asString
+                ?.takeIf { it.startsWith(prefix, ignoreCase = true) }
+                ?.substringAfter(':')
+                ?.lowercase()
+            if (code in compatibilityCategories) {
+                add("ext:$compatibilityFile:$code")
+            } else {
+                add(jsonValue)
+            }
+        }
     }
 
     /**
@@ -183,6 +278,7 @@ object CoreConfigManager {
         configureDns(configContext, v2rayConfig, policyGroupBalancerTags)
         configureLocalDns(configContext, v2rayConfig)
         configureRootModeDns(v2rayConfig)
+        applyConnectionDiagnosticsRule(v2rayConfig)
 
         // (added by getDns / getCustomLocalDns) to use the balancer, then add
         // the catch-all balancer rule.
@@ -210,6 +306,59 @@ object CoreConfigManager {
 
         return v2rayConfig
     }
+
+    /**
+     * Xray asks Android for a flow owner only when a routing rule needs the
+     * process field.  This always-nonmatching rule makes that lookup happen for
+     * each new app flow while preserving every real routing decision below it.
+     */
+    private fun applyConnectionDiagnosticsRule(v2rayConfig: V2rayConfig) {
+        if (!isConnectionDiagnosticsEnabled()) return
+
+        v2rayConfig.routing.rules.add(
+            0,
+            V2rayConfig.RoutingBean.RulesBean(
+                process = listOf(CONNECTION_DIAGNOSTICS_PROCESS),
+                outboundTag = AppConfig.TAG_DIRECT,
+            )
+        )
+    }
+
+    private fun applyConnectionDiagnosticsRule(json: JsonObject) {
+        if (!isConnectionDiagnosticsEnabled()) return
+
+        val outbounds = json.getAsJsonArray("outbounds") ?: return
+        val outboundTags = outbounds.mapNotNull { outbound ->
+            outbound.takeIf { it.isJsonObject }?.asJsonObject
+                ?.get("tag")
+                ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+                ?.asString
+        }
+        // A rule must refer to an existing outbound even though this process
+        // name is deliberately impossible to match.
+        val fallbackOutbound = outboundTags.firstOrNull { it == AppConfig.TAG_DIRECT }
+            ?: outboundTags.firstOrNull()
+            ?: return
+        val routing = (json.get("routing") as? JsonObject) ?: JsonObject().also { json.add("routing", it) }
+        val existingRules = routing.getAsJsonArray("rules") ?: JsonArray()
+        val rules = JsonArray().apply {
+            add(
+                JsonObject().apply {
+                addProperty("type", "field")
+                add("process", JsonArray().apply { add(CONNECTION_DIAGNOSTICS_PROCESS) })
+                addProperty("outboundTag", fallbackOutbound)
+                }
+            )
+            existingRules.forEach { add(it) }
+        }
+        routing.add("rules", rules)
+    }
+
+    private fun isConnectionDiagnosticsEnabled(): Boolean =
+        SettingsManager.isVpnMode() &&
+            MmkvManager.decodeSettingsBool(AppConfig.PREF_CONNECTION_DIAGNOSTICS_ENABLED) == true
+
+    private const val CONNECTION_DIAGNOSTICS_PROCESS = "com.zimavpn.__connection_diagnostics_never_match__"
 
     /**
      * Convert one analyzed outbound entry into concrete outbounds and register
@@ -421,44 +570,12 @@ object CoreConfigManager {
      */
     private fun toConfigResult(configContext: CoreConfigContext, v2rayConfig: V2rayConfig): ConfigResult {
         val json = JsonUtil.parseString(JsonUtil.toJson(v2rayConfig))
-        if (json != null) rewriteGeoDataAliases(json)
+        json?.takeIf { it.isJsonObject }?.asJsonObject?.let(::applyGeoRuleCompatibility)
         return ConfigResult(
             status = true,
             guid = configContext.guid,
             content = JsonUtil.toJsonPretty(json ?: v2rayConfig) ?: ""
         )
-    }
-
-    private fun rewriteGeoDataAliases(element: JsonElement) {
-        when {
-            element.isJsonArray -> {
-                val array = element.asJsonArray
-                for (index in 0 until array.size()) {
-                    val value = array[index]
-                    if (value.isJsonPrimitive && value.asJsonPrimitive.isString) {
-                        geoDataAliases[value.asString.lowercase()]?.let { replacement ->
-                            array.set(index, JsonPrimitive(replacement))
-                        }
-                    } else {
-                        rewriteGeoDataAliases(value)
-                    }
-                }
-            }
-            element.isJsonObject -> {
-                val objectValue = element.asJsonObject
-                objectValue.keySet().toList().forEach { key ->
-                    val value = objectValue.get(key)
-                    if (value.isJsonPrimitive && value.asJsonPrimitive.isString) {
-                        val original = value.asString
-                        geoDataAliases[original.lowercase()]?.let { replacement ->
-                            objectValue.add(key, JsonPrimitive(replacement))
-                        }
-                    } else {
-                        rewriteGeoDataAliases(value)
-                    }
-                }
-            }
-        }
     }
 
     /**
@@ -535,8 +652,9 @@ object CoreConfigManager {
         val sniffAllTlsAndHttp =
             MmkvManager.decodeSettingsBool(AppConfig.PREF_SNIFFING_ENABLED, true) != false
         inbound1.sniffing?.enabled = fakedns || sniffAllTlsAndHttp
-        inbound1.sniffing?.routeOnly =
-            MmkvManager.decodeSettingsBool(AppConfig.PREF_ROUTE_ONLY_ENABLED, false)
+        // Sniffed hostnames choose routing rules but must never replace the
+        // application's original IP destination.
+        inbound1.sniffing?.routeOnly = true
         if (!sniffAllTlsAndHttp) {
             inbound1.sniffing?.destOverride?.clear()
         }
@@ -561,7 +679,7 @@ object CoreConfigManager {
 
         if (needTun()) {
             val inboundTun = v2rayConfig.inbounds.firstOrNull { e -> e.tag == "tun" }
-            inboundTun?.settings?.mtu = SettingsManager.getVpnMtu()
+            inboundTun?.settings?.mtu = SettingsManager.getEffectiveVpnMtu()
             inboundTun?.sniffing = inbound1.sniffing
         }
     }
@@ -1175,19 +1293,6 @@ object CoreConfigManager {
         }
 
         val rule = JsonUtil.fromJson(JsonUtil.toJson(item), V2rayConfig.RoutingBean.RulesBean::class.java) ?: return
-
-        // Replace specific geoip rules with ext versions
-        rule.ip?.let { ipList ->
-            val updatedIpList = ArrayList<String>()
-            ipList.forEach { ip ->
-                when (ip) {
-                    AppConfig.GEOIP_CN -> updatedIpList.add("ext:${AppConfig.GEOIP_ONLY_CN_PRIVATE_DAT}:cn")
-                    AppConfig.GEOIP_PRIVATE -> updatedIpList.add("ext:${AppConfig.GEOIP_ONLY_CN_PRIVATE_DAT}:private")
-                    else -> updatedIpList.add(ip)
-                }
-            }
-            rule.ip = updatedIpList
-        }
 
         if (SettingsManager.canUseProcessRouting()) {
             // Convert process package names to UIDs

@@ -12,6 +12,7 @@
     <string name="local_profiles_name">Личные профили</string>
     <string name="subscription_profile_count">%1$d конфигураций — нажмите, чтобы раскрыть</string>
     <string name="subscription_profile_count_expanded">%1$d конфигураций — нажмите, чтобы свернуть</string>
+    <string name="title_view_config">Просмотр конфигурации</string>
     <string name="title_add_subscription_clipboard">Добавить подписку из буфера</string>
     <string name="subscription_updated_at">Обновлено: %1$s · профилей: %2$d</string>
     <string name="subscription_never_updated">Ещё не обновлялась · профилей: %1$d</string>
@@ -237,6 +238,12 @@
     <string name="title_pref_vpn_interface_address">Адрес интерфейса VPN</string>
 
     <string name="title_pref_vpn_mtu">VPN MTU (по умолчанию 1500)</string>
+    <string name="title_pref_adaptive_mtu">Адаптивный MTU</string>
+    <string name="summary_pref_adaptive_mtu">Подбирает более безопасный MTU для активной мобильной сети или Wi‑Fi. После изменения переподключите VPN.</string>
+    <string name="title_pref_notification_show_mtu">Показывать MTU в уведомлении</string>
+    <string name="summary_pref_notification_show_mtu">Показывает текущее эффективное значение MTU при подключении.</string>
+    <string name="title_pref_notification_show_active_outbound">Показывать активный маршрут в уведомлении</string>
+    <string name="summary_pref_notification_show_active_outbound">Показывает маршрут, через который прошёл последний трафик прокси.</string>
 
 
     <string name="title_pref_domestic_dns">Внутренняя DNS (необязательно)</string>
@@ -417,6 +424,13 @@
     <string name="update_download_started">Загрузка обновления началась. После завершения Android предложит установку.</string>
     <string name="update_install_permission">Разрешите приложению устанавливать обновления, затем снова нажмите «Обновить».</string>
     <string name="update_download_complete">Версия %1$s загружена. Нажмите, чтобы установить её.</string>
+    <string name="update_download_preparing">Подготовка загрузки обновления…</string>
+    <string name="update_download_progress">Загрузка обновления: %1$d%% · %2$s / %3$s</string>
+    <string name="update_download_progress_unknown">Загрузка обновления: %1$s</string>
+    <string name="update_download_paused">Загрузка обновления приостановлена…</string>
+    <string name="update_download_failed">Не удалось загрузить обновление (ошибка %1$d).</string>
+    <string name="update_download_installing">Загрузка завершена. Открываю установщик Android…</string>
+    <string name="update_install_launch_failed">Не удалось открыть установщик Android.</string>
     <string name="update_available_notification">Доступна новая версия %1$s. Нажмите, чтобы посмотреть обновление.</string>
 
     <string name="title_policy_group_type">Тип политики группы</string>

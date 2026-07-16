@@ -17,9 +17,6 @@ object UpdateCheckerManager {
     private fun githubHeaders(): Map<String, String> = buildMap {
         put("Accept", "application/vnd.github+json")
         put("X-GitHub-Api-Version", "2022-11-28")
-        BuildConfig.GITHUB_RELEASES_TOKEN.trim()
-            .takeIf { it.isNotEmpty() }
-            ?.let { put("Authorization", "Bearer $it") }
     }
 
     suspend fun checkForUpdate(includePreRelease: Boolean = false): CheckUpdateResult = withContext(Dispatchers.IO) {
@@ -32,27 +29,29 @@ object UpdateCheckerManager {
         val proxyUsername = SettingsManager.getSocksUsername()
         val proxyPassword = SettingsManager.getSocksPassword()
 
-        var response = HttpUtil.getUrlContent(
+        // Prefer the local Xray HTTP inbound while the VPN is active. The app
+        // process itself is bound to the physical network to avoid a VPN loop,
+        // so a direct request can otherwise be blocked even though the tunnel
+        // is healthy. Direct access remains a fallback for VPN-off updates.
+        val httpPort = SettingsManager.getHttpPort()
+        val responseThroughTunnel = HttpUtil.getUrlContent(
             UrlContentRequest(
                 url = url,
                 timeout = 5000,
+                httpPort = httpPort,
+                proxyUsername = proxyUsername,
+                proxyPassword = proxyPassword,
                 headers = githubHeaders()
             )
         )
-        if (response.isNullOrEmpty()) {
-            val httpPort = SettingsManager.getHttpPort()
-            response = HttpUtil.getUrlContent(
+        val response = responseThroughTunnel ?: HttpUtil.getUrlContent(
                 UrlContentRequest(
                     url = url,
                     timeout = 5000,
-                    httpPort = httpPort,
-                    proxyUsername = proxyUsername,
-                    proxyPassword = proxyPassword,
                     headers = githubHeaders()
                 )
             )
-                ?: throw IllegalStateException("Failed to get response")
-        }
+            ?: throw IllegalStateException("Failed to get response")
 
         val latestRelease = if (includePreRelease) {
             JsonUtil.fromJsonSafe(response, Array<GitHubRelease>::class.java)
@@ -113,13 +112,7 @@ object UpdateCheckerManager {
             ?: apkAssets.firstOrNull { it.name.contains("universal", ignoreCase = true) }
             ?: apkAssets.singleOrNull()
 
-        return asset?.let {
-            if (BuildConfig.GITHUB_RELEASES_TOKEN.isNotBlank()) {
-                it.apiUrl ?: it.browserDownloadUrl
-            } else {
-                it.browserDownloadUrl
-            }
-        }
+        return asset?.browserDownloadUrl
             ?: throw IllegalStateException("No compatible APK found")
     }
 }

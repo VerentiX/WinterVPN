@@ -379,10 +379,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun initAssets(assets: AssetManager) {
         viewModelScope.launch(Dispatchers.Default) {
-            SettingsManager.initAssets(getApplication<AngApplication>(), assets)
-            geoAssetsReadyAction.postValue(
-                GeoAssetUpdater.hasUsableLocalFiles(getApplication<AngApplication>())
-            )
+            val application = getApplication<AngApplication>()
+            SettingsManager.initAssets(application, assets)
+            val ready = GeoAssetUpdater.hasUsableLocalFiles(application)
+            geoAssetsReadyAction.postValue(ready)
+            if (!ready) {
+                GeoAssetUpdater.scheduleFirstInstall(application)
+            }
         }
     }
 

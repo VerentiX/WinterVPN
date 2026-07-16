@@ -45,7 +45,11 @@ object NotificationManager {
      * @param currentConfig The current profile configuration.
      */
     fun startSpeedNotification() {
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_SPEED_ENABLED) != true) return
+        val showSpeed = MmkvManager.decodeSettingsBool(AppConfig.PREF_SPEED_ENABLED) == true
+        val showActiveRoute = MmkvManager.decodeSettingsBool(
+            AppConfig.PREF_NOTIFICATION_SHOW_ACTIVE_OUTBOUND
+        ) == true
+        if (!showSpeed && !showActiveRoute) return
         if (speedNotificationJob != null || CoreServiceManager.isRunning() == false) return
 
         var lastZeroSpeed = false
@@ -107,6 +111,7 @@ object NotificationManager {
             .setOngoing(true)
             .setShowWhen(false)
             .setOnlyAlertOnce(true)
+            .setContentText(connectionDetails())
             .setContentIntent(contentPendingIntent)
             .addAction(
                 R.drawable.ic_delete_24dp,
@@ -197,6 +202,27 @@ object NotificationManager {
         }
     }
 
+    /** Refreshes route/MTU details immediately after Xray accepts a new flow. */
+    fun refreshConnectionDetails() {
+        val builder = mBuilder ?: return
+        val text = connectionDetails()
+        builder.setStyle(NotificationCompat.BigTextStyle().bigText(text))
+        builder.setContentText(text)
+        getNotificationManager()?.notify(NOTIFICATION_ID, builder.build())
+    }
+
+    private fun connectionDetails(): String {
+        val parts = ArrayList<String>(2)
+        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_NOTIFICATION_SHOW_MTU) == true) {
+            parts.add("MTU ${SettingsManager.getEffectiveVpnMtu()}")
+        }
+        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_NOTIFICATION_SHOW_ACTIVE_OUTBOUND) == true) {
+            val route = CoreServiceManager.getActiveOutboundLabel()
+            parts.add(if (route.isBlank()) "Маршрут: ожидание трафика" else "Маршрут: $route")
+        }
+        return parts.joinToString(" · ")
+    }
+
     /**
      * Gets the notification manager.
      * @return The notification manager.
@@ -249,7 +275,8 @@ object NotificationManager {
         var directUplink = 0L
         var directDownlink = 0L
 
-        CoreServiceManager.queryAllOutboundTrafficStats().forEach { stat ->
+        val outboundStats = CoreServiceManager.queryAllOutboundTrafficStats()
+        outboundStats.forEach { stat ->
             when {
                 stat.tag == AppConfig.TAG_DIRECT -> {
                     when (stat.direction) {
@@ -258,7 +285,7 @@ object NotificationManager {
                     }
                 }
 
-                stat.tag.startsWith(AppConfig.TAG_PROXY) -> {
+                stat.tag.startsWith("route-") || stat.tag == AppConfig.TAG_PROXY -> {
                     when (stat.direction) {
                         AppConfig.UPLINK -> proxyUplink += stat.value
                         AppConfig.DOWNLINK -> proxyDownlink += stat.value
@@ -270,19 +297,22 @@ object NotificationManager {
         val proxyTotal = proxyUplink + proxyDownlink
         val directTotal = directUplink + directDownlink
         val zeroSpeed = proxyTotal + directTotal == 0L
+        val showSpeed = MmkvManager.decodeSettingsBool(AppConfig.PREF_SPEED_ENABLED) == true
         if (!zeroSpeed || !lastZeroSpeed) {
-            val text = StringBuilder()
-            appendSpeedString(
-                text, AppConfig.TAG_PROXY,
-                proxyUplink / sinceLastQueryInSeconds,
-                proxyDownlink / sinceLastQueryInSeconds
-            )
-
-            appendSpeedString(
-                text, AppConfig.TAG_DIRECT,
-                directUplink / sinceLastQueryInSeconds,
-                directDownlink / sinceLastQueryInSeconds
-            )
+            val text = StringBuilder(connectionDetails())
+            if (showSpeed) {
+                if (text.isNotEmpty()) text.append('\n')
+                appendSpeedString(
+                    text, AppConfig.TAG_PROXY,
+                    proxyUplink / sinceLastQueryInSeconds,
+                    proxyDownlink / sinceLastQueryInSeconds
+                )
+                appendSpeedString(
+                    text, AppConfig.TAG_DIRECT,
+                    directUplink / sinceLastQueryInSeconds,
+                    directDownlink / sinceLastQueryInSeconds
+                )
+            }
             updateNotification(text.toString(), proxyTotal, directTotal)
         }
         lastQueryTime = queryTime

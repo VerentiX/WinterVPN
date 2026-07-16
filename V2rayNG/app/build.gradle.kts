@@ -12,11 +12,6 @@ val localProperties = Properties().apply {
         localPropertiesFile.inputStream().use { load(it) }
     }
 }
-val githubReleasesToken = "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"
-val escapedGithubReleasesToken = githubReleasesToken
-    .replace("\\", "\\\\")
-    .replace("\"", "\\\"")
-
 android {
     namespace = "com.v2ray.ang"
     compileSdk = 37
@@ -27,14 +22,9 @@ android {
         targetSdk = 37
         // 10000 = 1.0.0. Keep increasing this value for every published APK.
         // It is intentionally above the old v2rayNG code so Android accepts the rebrand as an update.
-        versionCode = 10001
-        versionName = "1.0.1"
+        versionCode = 10103
+        versionName = "1.1.3"
         multiDexEnabled = true
-        buildConfigField(
-            "String",
-            "GITHUB_RELEASES_TOKEN",
-            "\"$escapedGithubReleasesToken\""
-        )
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {

@@ -66,7 +66,7 @@ class TProxyService(
         val escapedSocksPassword = socksPassword?.replace("'", "''")
         return buildString {
             appendLine("tunnel:")
-            appendLine("  mtu: ${SettingsManager.getVpnMtu()}")
+            appendLine("  mtu: ${SettingsManager.getEffectiveVpnMtu()}")
             appendLine("  ipv4: ${vpnConfig.ipv4Client}")
 
             if (MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED)) {

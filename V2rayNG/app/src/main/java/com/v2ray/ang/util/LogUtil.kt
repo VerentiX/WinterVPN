@@ -70,6 +70,12 @@ object LogUtil {
     fun w(tag: String = AppConfig.TAG, message: String) = log(Log.WARN, tag, message)
     fun e(tag: String = AppConfig.TAG, message: String) = log(Log.ERROR, tag, message)
 
+    /**
+     * Network/TUN lifecycle events remain visible even when normal core logging
+     * is kept at the default "warning" level.
+     */
+    fun transport(message: String) = Log.i(AppConfig.TAG, "TRANSPORT: $message")
+
     fun d(tag: String = AppConfig.TAG, message: String, throwable: Throwable) = log(Log.DEBUG, tag, message, throwable)
     fun i(tag: String = AppConfig.TAG, message: String, throwable: Throwable) = log(Log.INFO, tag, message, throwable)
     fun w(tag: String = AppConfig.TAG, message: String, throwable: Throwable) = log(Log.WARN, tag, message, throwable)

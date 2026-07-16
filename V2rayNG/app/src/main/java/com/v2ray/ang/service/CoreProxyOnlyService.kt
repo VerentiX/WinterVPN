@@ -68,7 +68,7 @@ class CoreProxyOnlyService : Service(), ServiceControl {
         stopSelf()
     }
 
-    override fun reloadService() {
+    override fun reloadService(force: Boolean) {
         CoroutineScope(Dispatchers.IO).launch {
             CoreServiceManager.reloadCoreLoop(null)
         }

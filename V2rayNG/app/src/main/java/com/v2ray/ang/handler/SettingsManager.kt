@@ -30,6 +30,7 @@ import com.v2ray.ang.handler.MmkvManager.encodeSubscription
 import com.v2ray.ang.handler.MmkvManager.removeSubscription
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.MtuPathProbe
 import com.v2ray.ang.util.Utils
 import java.io.File
 import java.io.FileOutputStream
@@ -546,6 +547,24 @@ object SettingsManager {
         }
     }
 
+    /** Active-route health-check interval. Values are stored in seconds for readable backups. */
+    fun getPriorityProbeIntervalMs(screenOn: Boolean): Long {
+        val key = if (screenOn) {
+            AppConfig.PREF_PRIORITY_PROBE_SCREEN_ON_SECONDS
+        } else {
+            AppConfig.PREF_PRIORITY_PROBE_SCREEN_OFF_SECONDS
+        }
+        val defaultSeconds = if (screenOn) {
+            AppConfig.DEFAULT_PRIORITY_PROBE_SCREEN_ON_SECONDS
+        } else {
+            AppConfig.DEFAULT_PRIORITY_PROBE_SCREEN_OFF_SECONDS
+        }
+        val minimum = if (screenOn) 2L else 10L
+        val seconds = MmkvManager.decodeSettingsLong(key, defaultSeconds)
+            .coerceIn(minimum, 86_400L)
+        return seconds * 1_000L
+    }
+
     /**
      * Get real ping concurrency.
      * @return The number of concurrent real-ping tests (clamped to 1..64).
@@ -582,11 +601,10 @@ object SettingsManager {
      * Set night mode.
      */
     fun setNightMode() {
-        when (MmkvManager.decodeSettingsString(AppConfig.PREF_UI_MODE_NIGHT, "0")) {
-            "0" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
-            "1" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
-            "2" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
-        }
+        // The main Winter UI uses a dark branded background. Following the phone's
+        // light theme makes framework-controlled text/icons black on that background.
+        // Keep one deterministic palette so every screen has the same contrast.
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
     }
 
     /**
@@ -603,32 +621,65 @@ object SettingsManager {
     }
 
     /**
-     * Get the VPN MTU from settings, defaulting to AppConfig.VPN_MTU.
+     * Manual VPN MTU from settings, or 1500 as fallback when link MTU is not
+     * available yet (custom MTU off / adaptive waiting for network).
      */
     fun getVpnMtu(): Int {
+        if (!isCustomMtuEnabled()) return AppConfig.VPN_MTU
         return Utils.parseInt(MmkvManager.decodeSettingsString(AppConfig.PREF_VPN_MTU), AppConfig.VPN_MTU)
     }
 
-    /** MTU selected for the currently active Android network, or the manual value. */
+    /**
+     * Effective TUN MTU: runtime value (link / probed) when set, otherwise
+     * [getVpnMtu] (manual or 1500 fallback).
+     */
     fun getEffectiveVpnMtu(): Int = runtimeVpnMtu ?: getVpnMtu()
 
+    fun isCustomMtuEnabled(): Boolean =
+        MmkvManager.decodeSettingsBool(AppConfig.PREF_CUSTOM_MTU_ENABLED, false) == true
+
+    /**
+     * True when TUN MTU should follow the active network (and optional probes):
+     * either custom MTU is off (use Android link MTU unchanged), or adaptive is on.
+     */
+    fun followsNetworkMtu(): Boolean =
+        !isCustomMtuEnabled() || isAdaptiveMtuEnabled()
+
     fun isAdaptiveMtuEnabled(): Boolean =
-        MmkvManager.decodeSettingsBool(AppConfig.PREF_ADAPTIVE_MTU_ENABLED, false) == true
+        isCustomMtuEnabled() &&
+            MmkvManager.decodeSettingsBool(AppConfig.PREF_ADAPTIVE_MTU_ENABLED, false) == true
+
+    fun getAdaptiveMtuForTransport(transport: MtuPathProbe.Transport): Int? {
+        val key = when (transport) {
+            MtuPathProbe.Transport.WIFI -> AppConfig.PREF_ADAPTIVE_MTU_WIFI
+            MtuPathProbe.Transport.CELLULAR -> AppConfig.PREF_ADAPTIVE_MTU_CELLULAR
+        }
+        val stored = MmkvManager.decodeSettingsInt(key, 0)
+        return stored.takeIf { it in 1280..9_000 }
+    }
+
+    fun setAdaptiveMtuForTransport(transport: MtuPathProbe.Transport, mtu: Int) {
+        val key = when (transport) {
+            MtuPathProbe.Transport.WIFI -> AppConfig.PREF_ADAPTIVE_MTU_WIFI
+            MtuPathProbe.Transport.CELLULAR -> AppConfig.PREF_ADAPTIVE_MTU_CELLULAR
+        }
+        MmkvManager.encodeSettings(key, mtu.coerceIn(1280, 9_000))
+    }
 
     /** @return true only when the effective MTU actually changed. */
     fun setRuntimeVpnMtu(mtu: Int?): Boolean {
-        val normalized = mtu?.coerceIn(1280, AppConfig.VPN_MTU)
+        val normalized = mtu?.coerceIn(1280, 9_000)
         val changed = runtimeVpnMtu != normalized
         runtimeVpnMtu = normalized
         return changed
     }
 
     /**
-     * Check if HEV TUN is being used.
-     * @return True if HEV TUN is used, false otherwise.
+     * Hev TUN is mandatory for VPN mode. The toggle is hidden from Settings.
      */
     fun isUsingHevTun(): Boolean {
-        return MmkvManager.decodeSettingsBool(AppConfig.PREF_USE_HEV_TUNNEL, true)
+        MmkvManager.encodeSettings(AppConfig.PREF_USE_HEV_TUNNEL, true)
+        return true
     }
 
     /**
@@ -682,7 +733,10 @@ object SettingsManager {
         ensureDefaultValue(AppConfig.PREF_DOMESTIC_DNS, AppConfig.DNS_DIRECT)
         ensureDefaultValue(AppConfig.PREF_DELAY_TEST_URL, AppConfig.DELAY_TEST_URL)
         ensureDefaultValue(AppConfig.PREF_IP_API_URL, AppConfig.IP_API_URL)
+        migrateIpApiUrlToForeign()
+        migrateDelayTestUrlToForeign()
         ensureDefaultValue(AppConfig.PREF_HEV_TUNNEL_RW_TIMEOUT, AppConfig.HEVTUN_RW_TIMEOUT)
+        ensureDefaultHevTunEnabled()
         ensureDefaultValue(AppConfig.PREF_MUX_CONCURRENCY, "8")
         ensureDefaultValue(AppConfig.PREF_MUX_XUDP_CONCURRENCY, "8")
         ensureDefaultValue(AppConfig.PREF_FRAGMENT_LENGTH, "50-100")
@@ -694,6 +748,46 @@ object SettingsManager {
         if (MmkvManager.decodeSettingsString(key).isNullOrEmpty()) {
             MmkvManager.encodeSettings(key, default)
         }
+    }
+
+    /** Upgrade broken/legacy IP APIs to ipwho.is (Cloudflare meta returns 403). */
+    private fun migrateIpApiUrlToForeign() {
+        val legacy = setOf(
+            AppConfig.IP_API_URL_LEGACY,
+            "https://speed.cloudflare.com/meta"
+        )
+        val current = MmkvManager.decodeSettingsString(AppConfig.PREF_IP_API_URL)
+        if (current.isNullOrBlank() || current in legacy) {
+            MmkvManager.encodeSettings(AppConfig.PREF_IP_API_URL, AppConfig.IP_API_URL)
+        }
+    }
+
+    /** Prefer Cloudflare generate_204 for connectivity checks when still on old Google defaults. */
+    private fun migrateDelayTestUrlToForeign() {
+        val legacy = setOf(
+            "https://www.gstatic.com/generate_204",
+            "https://www.google.com/generate_204"
+        )
+        val current = MmkvManager.decodeSettingsString(AppConfig.PREF_DELAY_TEST_URL)
+        if (current.isNullOrBlank() || current in legacy) {
+            MmkvManager.encodeSettings(AppConfig.PREF_DELAY_TEST_URL, AppConfig.DELAY_TEST_URL)
+        }
+    }
+
+    private fun ensureDefaultHevTunEnabled() {
+        MmkvManager.encodeSettings(AppConfig.PREF_USE_HEV_TUNNEL, true)
+    }
+
+    /**
+     * Clears application settings and restores built-in defaults.
+     * Subscriptions and server profiles are preserved.
+     */
+    fun resetSettingsToDefaults(context: Context) {
+        MmkvManager.clearSettings()
+        runtimeVpnMtu = null
+        runtimeSocksPort = null
+        ensureDefaultSettings()
+        initRoutingRulesets(context)
     }
 
     private fun migrateHysteria2PinSHA256() {

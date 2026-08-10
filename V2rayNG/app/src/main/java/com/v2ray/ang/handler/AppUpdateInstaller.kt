@@ -33,7 +33,7 @@ object AppUpdateInstaller {
         val version = update.latestVersion.orEmpty().ifBlank { "update" }
         val safeVersion = version.replace(Regex("[^0-9A-Za-z._-]"), "_")
         val directory = File(context.cacheDir, "updates").apply { mkdirs() }
-        val apk = File(directory, "ZimaVPN-$safeVersion.apk")
+        val apk = File(directory, "Winter-$safeVersion.apk")
         val partial = File(directory, "${apk.name}.part")
         partial.delete()
 
@@ -72,7 +72,7 @@ object AppUpdateInstaller {
             .setDataAndType(apkUri, APK_MIME_TYPE)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             .apply {
-                clipData = ClipData.newRawUri("ZimaVPN update", apkUri)
+                clipData = ClipData.newRawUri("Winter update", apkUri)
                 if (context !is android.app.Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         return runCatching {

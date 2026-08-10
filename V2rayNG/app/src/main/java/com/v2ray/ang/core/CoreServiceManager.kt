@@ -10,18 +10,20 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
+import android.os.SystemClock
 import android.system.OsConstants
 import androidx.core.content.ContextCompat
 import com.google.gson.JsonParser
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.contracts.ServiceControl
-import com.v2ray.ang.dto.OutboundTrafficStat
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.toast
 import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.SubscriptionRefreshManager
 import com.v2ray.ang.handler.GeoAssetUpdater
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
@@ -31,23 +33,32 @@ import com.v2ray.ang.service.CoreProxyOnlyService
 import com.v2ray.ang.service.CoreRootService
 import com.v2ray.ang.service.CoreVpnService
 import com.v2ray.ang.service.DialerNativeService
-import com.v2ray.ang.service.DialerWebviewService
 import com.v2ray.ang.service.IDialerService
+import com.v2ray.ang.util.FailureLogRecorder
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.ProcessFinder
-import java.lang.ref.SoftReference
 import java.net.InetSocketAddress
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 object CoreServiceManager {
+
+    /** Native stopLoop can hang after overnight network death; never block forever. */
+    private const val STOP_LOOP_TIMEOUT_MS = 8_000L
+    /** Brief pause so priority-probe ports are released before the next startLoop. */
+    private const val POST_STOP_DELAY_MS = 400L
 
     private val coreController: CoreController = CoreNativeManager.newCoreController(CoreCallback())
     private val mMsgReceive = ReceiveMessageHandler()
@@ -58,25 +69,41 @@ object CoreServiceManager {
     private var outboundLabels: Map<String, String> = emptyMap()
     @Volatile
     private var activeOutboundLabel: String = ""
+    @Volatile
+    private var activeRoutingModeLabel: String = ""
     private var processFinder: XrayProcessFinder? = null
     private var browserDialer: IDialerService? = null
     private var receiverRegistered = false
     private val coreLifecycleLock = ReentrantLock()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val serviceActionScope = CoroutineScope(Dispatchers.IO)
 
     @Volatile
     private var suppressShutdownStop = false
 
-    var serviceControl: SoftReference<ServiceControl>? = null
-        set(value) {
-            field = value
-            val service = value?.get()?.getService()
-            CoreNativeManager.initCoreEnv(service)
-            if (service != null && processFinder == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                processFinder = XrayProcessFinder(service)
-                coreController.registerProcessFinder(processFinder)
-            }
+    /**
+     * Strong reference while the VPN/proxy service is alive. SoftReference previously
+     * risked dropping the handle under memory pressure so stop/reload became no-ops.
+     */
+    @Volatile
+    var serviceControl: ServiceControl? = null
+        private set
+
+    fun bindServiceControl(control: ServiceControl) {
+        serviceControl = control
+        val service = control.getService()
+        CoreNativeManager.initCoreEnv(service)
+        if (processFinder == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            processFinder = XrayProcessFinder(service)
+            coreController.registerProcessFinder(processFinder)
         }
+    }
+
+    fun unbindServiceControl(control: ServiceControl) {
+        if (serviceControl === control) {
+            serviceControl = null
+        }
+    }
 
     /**
      * Starts the V2Ray service from a toggle action.
@@ -141,15 +168,27 @@ object CoreServiceManager {
         MessageUtil.sendMsg2Service(context, AppConfig.MSG_STATE_RELOAD, "")
     }
 
+    /** Rebuilds the VPN TUN so a new adaptive MTU takes effect. */
+    fun requestTunRecreate() {
+        serviceControl?.requestTunRecreate()
+    }
+
     /** Applies a runtime route change even though the selected profile GUID is unchanged. */
-    fun reloadPriorityRoute() {
-        val control = serviceControl?.get()
+    fun reloadPriorityRoute(): Boolean {
+        val control = serviceControl
         if (control == null) {
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: No service for priority route reload")
-            return
+            return false
         }
         LogUtil.transport("Requesting forced soft reload for priority route change")
-        control.reloadService(force = true)
+        return control.reloadService(force = true)
+    }
+
+    /** Escalate a priority reload timeout instead of endlessly queuing soft reloads. */
+    fun recoverStalledPriorityReload(): Boolean {
+        val control = serviceControl ?: return false
+        LogUtil.transport("Recovering stalled priority reload")
+        return control.recoverStalledReload()
     }
 
     /** Performs a full service restart without relying on a guessed fixed delay. */
@@ -163,14 +202,62 @@ object CoreServiceManager {
      */
     fun isRunning() = coreController.isRunning
 
+    /** Measure delay through the currently running core, or -1 on failure. */
+    fun measureRunningDelay(): Long {
+        if (!coreController.isRunning) return -1L
+        return try {
+            val primary = coreController.measureDelay(SettingsManager.getDelayTestUrl())
+            if (primary >= 0) primary
+            else coreController.measureDelay(SettingsManager.getDelayTestUrl(true))
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: measureRunningDelay failed", e)
+            -1L
+        }
+    }
+
     /**
      * Gets the name of the currently running server.
      * @return The name of the running server.
      */
     fun getRunningServerName() = currentConfig?.remarks.orEmpty()
 
-    /** Most recent route selected for a real connection accepted by auto-proxy-in. */
+    /** Route currently selected by Smart Priority. */
     fun getActiveOutboundLabel(): String = activeOutboundLabel
+
+    /** Roscom routing profile currently applied by Smart Priority (`default` / `whitelist`). */
+    fun getActiveRoutingModeLabel(): String = activeRoutingModeLabel
+
+    /**
+     * Smart Priority is the source of truth for the selected route. Native access
+     * logs are not guaranteed to be delivered through CoreCallbackHandler, so the
+     * notification must not depend on observing a GoLog line.
+     */
+    fun setActiveOutboundTag(routeTag: String) {
+        if (routeTag.isBlank()) return
+        val label = outboundLabels[routeTag] ?: routeTag
+        val changed = activeOutboundLabel != label
+        activeOutboundLabel = label
+        if (changed) {
+            LogUtil.transport("Active route is $label")
+        }
+        // Always refresh: soft-reload / FGS startup can leave "ожидание трафика"
+        // on screen even when the in-memory label was already correct.
+        NotificationManager.refreshConnectionDetails()
+    }
+
+    internal fun setActiveRoutingMode(mode: RoscomPriorityRouting.Mode?) {
+        val label = when (mode) {
+            RoscomPriorityRouting.Mode.FULL -> "default"
+            RoscomPriorityRouting.Mode.WHITELIST -> "whitelist"
+            null -> ""
+        }
+        val changed = activeRoutingModeLabel != label
+        activeRoutingModeLabel = label
+        if (changed && label.isNotEmpty()) {
+            runCatching { LogUtil.transport("Active routing mode is $label") }
+        }
+        NotificationManager.refreshConnectionDetails()
+    }
 
     fun isSelectedProfileRunning(): Boolean {
         return coreController.isRunning && currentConfigGuid == MmkvManager.getSelectServer()
@@ -279,6 +366,7 @@ object CoreServiceManager {
         return try {
             doStartCoreLoop(service, vpnInterface, prepareCoreStart(service))
             suppressShutdownStop = false
+            SubscriptionRefreshManager.startVpnBackgroundRefresh()
             true
         } catch (e: Exception) {
             val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
@@ -339,8 +427,9 @@ object CoreServiceManager {
         currentConfigGuid = guid
         currentRuntimeConfig = prepared.content
         outboundLabels = buildOutboundLabels(prepared.content)
-        activeOutboundLabel = ""
-        NotificationManager.showNotification(currentConfig)
+        // Do not blank the route label here: that paints "Маршрут: ожидание трафика"
+        // into the FGS notification before Smart Priority / access-log can republish.
+        // Soft reload keeps the previous label until onCoreStarted updates it.
 
         if (browserDialer != null) {
             browserDialer!!.stop()
@@ -349,14 +438,13 @@ object CoreServiceManager {
         if (config.browserDialerMode == "OkHttp") {
             browserDialer = DialerNativeService()
             browserDialer!!.start(service, dialerAddr)
-        } else if (config.browserDialerMode == "WebView") {
-            browserDialer = DialerWebviewService()
-            browserDialer!!.start(service, dialerAddr)
         }
 
         MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
-        NotificationManager.startSpeedNotification()
         PriorityFailoverManager.onCoreStarted(service)
+        // Rebuild foreground notification after the active route label is known.
+        NotificationManager.showNotification(currentConfig)
+        FailureLogRecorder.markSessionActive("core_started:${config.remarks}")
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core started successfully")
     }
 
@@ -366,6 +454,7 @@ object CoreServiceManager {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_USER_PRESENT)
+            addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
         }
         ContextCompat.registerReceiver(service, mMsgReceive, filter, Utils.receiverFlags())
         receiverRegistered = true
@@ -379,7 +468,11 @@ object CoreServiceManager {
     fun stopCoreLoop(preservePriorityState: Boolean = false): Boolean {
         return coreLifecycleLock.withLock {
             stopCoreLoopLocked(
-                notifyUi = true,
+                // A preserved priority state means this is an internal core recycle
+                // (Wi-Fi/LTE handover or failed soft-reload recovery), not a user stop.
+                // Keep the foreground notification and its cumulative battery baseline
+                // alive so the displayed usage does not restart from zero.
+                notifyUi = !preservePriorityState,
                 clearPriorityState = !preservePriorityState,
             )
         }
@@ -402,6 +495,8 @@ object CoreServiceManager {
             } catch (e: Exception) {
                 val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
                 LogUtil.e(AppConfig.TAG, "StartCore-Manager: Reload preparation failed: $message", e)
+                PriorityFailoverManager.rollbackPendingSwitch()
+                PriorityFailoverManager.notifyReloadAborted()
                 if (GeoAssetUpdater.isGeoDataError(message)) {
                     GeoAssetUpdater.forceUpdate(service, reconnectAfterUpdate = true)
                 }
@@ -416,28 +511,56 @@ object CoreServiceManager {
                 val profile = currentConfig
                 if (guid != null && profile != null) PreparedCoreStart(guid, profile, content) else null
             }
-            stopCoreLoopLocked(notifyUi = false)
+            if (!stopCoreLoopLocked(notifyUi = false)) {
+                LogUtil.e(AppConfig.TAG, "StartCore-Manager: Old core did not stop; aborting reload")
+                PriorityFailoverManager.rollbackPendingSwitch()
+                PriorityFailoverManager.notifyReloadAborted()
+                return@withLock false
+            }
+            waitForPortRelease()
+            var lastError: Exception? = null
             try {
                 doStartCoreLoop(service, vpnInterface, next)
                 suppressShutdownStop = false
-                true
+                return@withLock true
             } catch (e: Exception) {
+                lastError = e
                 LogUtil.e(AppConfig.TAG, "StartCore-Manager: New core failed; restoring previous config", e)
-                PriorityFailoverManager.rollbackPendingSwitch()
-                if (previous != null) {
-                    try {
-                        doStartCoreLoop(service, vpnInterface, previous)
-                        suppressShutdownStop = false
-                        MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_RUNNING, "")
-                        return@withLock true
-                    } catch (rollbackError: Exception) {
-                        LogUtil.e(AppConfig.TAG, "StartCore-Manager: Previous config rollback failed", rollbackError)
-                    }
-                }
-                val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
-                MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
-                false
             }
+
+            PriorityFailoverManager.rollbackPendingSwitch()
+            if (previous != null && lastError?.let(::isPortBindError) != true) {
+                try {
+                    doStartCoreLoop(service, vpnInterface, previous)
+                    suppressShutdownStop = false
+                    MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_RUNNING, "")
+                    return@withLock true
+                } catch (rollbackError: Exception) {
+                    lastError = rollbackError
+                    LogUtil.e(AppConfig.TAG, "StartCore-Manager: Previous config rollback failed", rollbackError)
+                }
+            }
+
+            if (lastError?.let(::isPortBindError) == true) {
+                PriorityFailoverManager.rotateProbePortsForReload()
+            }
+            waitForPortRelease()
+            try {
+                val rebuilt = prepareCoreStart(service)
+                doStartCoreLoop(service, vpnInterface, rebuilt)
+                suppressShutdownStop = false
+                MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_RUNNING, "")
+                return@withLock true
+            } catch (recoveryError: Exception) {
+                LogUtil.e(AppConfig.TAG, "StartCore-Manager: Rebuilt config recovery failed", recoveryError)
+            }
+
+            PriorityFailoverManager.notifyReloadAborted()
+            val message = lastError?.message?.takeUnless { it.isBlank() }
+                ?: lastError?.javaClass?.simpleName
+                ?: "reload failed"
+            MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
+            false
         }
     }
 
@@ -448,15 +571,7 @@ object CoreServiceManager {
         val service = getService() ?: return false
 
         suppressShutdownStop = true
-        if (coreController.isRunning) {
-            try {
-                // stopLoop is deliberately synchronous. Starting another core before it
-                // returns caused intermittent "port already in use" failures.
-                coreController.stopLoop()
-            } catch (e: Exception) {
-                LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop V2Ray loop", e)
-            }
-        }
+        val stopped = !coreController.isRunning || stopLoopWithTimeout()
 
         // Close existing browser dialer
         CoreNativeManager.reconcileBrowserDialer("")
@@ -466,9 +581,11 @@ object CoreServiceManager {
         }
 
         if (notifyUi) {
+            SubscriptionRefreshManager.stopVpnBackgroundRefresh()
             PriorityFailoverManager.stop(clearState = clearPriorityState)
             MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
             NotificationManager.cancelNotification()
+            FailureLogRecorder.markSessionClean("core_stopped")
         }
 
         if (notifyUi && receiverRegistered) {
@@ -482,9 +599,65 @@ object CoreServiceManager {
             currentRuntimeConfig = null
             outboundLabels = emptyMap()
             activeOutboundLabel = ""
+            activeRoutingModeLabel = ""
         }
 
-        return true
+        return stopped
+    }
+
+    /**
+     * stopLoop is synchronous and can hang when sockets are stuck after Doze / overnight
+     * network loss. Bound the wait so VPN teardown and the UI never block forever.
+     */
+    private fun stopLoopWithTimeout(): Boolean {
+        val executor = Executors.newSingleThreadExecutor()
+        return try {
+            // Explicit Callable avoids Java overload resolution selecting
+            // submit(Runnable), whose Future.get() result is typed as Any?.
+            val future = executor.submit(Callable<Boolean> {
+                try {
+                    coreController.stopLoop()
+                    !coreController.isRunning
+                } catch (e: Exception) {
+                    LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop V2Ray loop", e)
+                    false
+                }
+            })
+            future.get(STOP_LOOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        } catch (_: TimeoutException) {
+            LogUtil.e(
+                AppConfig.TAG,
+                "StartCore-Manager: stopLoop timed out after ${STOP_LOOP_TIMEOUT_MS}ms",
+            )
+            false
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop V2Ray loop", e)
+            false
+        } finally {
+            executor.shutdown()
+            if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+                LogUtil.w(
+                    AppConfig.TAG,
+                    "StartCore-Manager: stopLoop thread still running after shutdown; interrupting",
+                )
+                executor.shutdownNow()
+            }
+        }
+    }
+
+    private fun waitForPortRelease() {
+        try {
+            Thread.sleep(POST_STOP_DELAY_MS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+    }
+
+    private fun isPortBindError(e: Exception): Boolean {
+        val message = e.message ?: return false
+        return message.contains("failed to listen", ignoreCase = true) ||
+            message.contains("bind:", ignoreCase = true) ||
+            message.contains("operation not permitted", ignoreCase = true)
     }
 
     private data class PreparedCoreStart(
@@ -492,35 +665,6 @@ object CoreServiceManager {
         val profile: ProfileItem,
         val content: String,
     )
-
-    /**
-     * Queries and resets all outbound traffic counters in one core call.
-     * Go side format: tag,direction,value;tag,direction,value;
-     */
-    fun queryAllOutboundTrafficStats(): List<OutboundTrafficStat> {
-        val payload = coreController.queryAllOutboundTrafficStats()
-
-        val result = ArrayList<OutboundTrafficStat>()
-
-        payload.split(';').forEach { entry ->
-            if (entry.isBlank()) return@forEach
-
-            val parts = entry.split(',', limit = 3)
-            if (parts.size != 3) return@forEach
-
-            val value = parts[2].toLongOrNull() ?: return@forEach
-
-            result.add(
-                OutboundTrafficStat(
-                    tag = parts[0],
-                    direction = parts[1],
-                    value = value,
-                )
-            )
-        }
-//        LogUtil.d(AppConfig.TAG, "Queried outbound traffic stats: $result")
-        return result
-    }
 
     /**
      * Receives access-log lines forwarded by the native Xray wrapper. Unlike
@@ -533,12 +677,10 @@ object CoreServiceManager {
             ?.groupValues
             ?.getOrNull(1)
             ?: return
-        val label = outboundLabels[routeTag] ?: return
-        if (activeOutboundLabel != label) {
-            activeOutboundLabel = label
-            LogUtil.transport("Actual user route is $label")
-            NotificationManager.refreshConnectionDetails()
-        }
+        // Real TUN traffic is the ground truth for leastLoad seamless balancers
+        // (Smart Priority's monitored index can differ from the outbound in use).
+        runCatching { setActiveOutboundTag(routeTag) }
+            .onFailure { LogUtil.e(AppConfig.TAG, "StartCore-Manager: observeAccessLog failed", it) }
     }
 
     private fun buildOutboundLabels(runtimeConfig: String): Map<String, String> = runCatching {
@@ -550,15 +692,68 @@ object CoreServiceManager {
                 if (!tag.startsWith("route-p")) return@mapNotNull null
                 val priority = Regex("""route-p0*(\d+)""")
                     .find(tag)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
-                val settings = outbound.getAsJsonObject("settings")
-                val address = settings?.get("address")?.asString.orEmpty()
-                val port = settings?.get("port")?.asString.orEmpty()
-                tag to "[P$priority] $address${if (port.isBlank()) "" else ":$port"}"
+                val endpoint = outboundEndpointLabel(outbound)
+                tag to if (endpoint.isBlank()) {
+                    "[P$priority] $tag"
+                } else {
+                    "[P$priority] $endpoint"
+                }
             }
             .toMap()
     }.getOrElse {
         LogUtil.w(AppConfig.TAG, "StartCore-Manager: Failed to map automatic routes", it)
         emptyMap()
+    }
+
+    /** Best-effort host:port for notification text; never throws on WG arrays / vnext. */
+    private fun outboundEndpointLabel(outbound: com.google.gson.JsonObject): String {
+        val settings = outbound.getAsJsonObject("settings") ?: return ""
+        settings.get("address")?.let { addressElement ->
+            val host = when {
+                addressElement.isJsonPrimitive -> addressElement.asString
+                addressElement.isJsonArray -> addressElement.asJsonArray
+                    .firstOrNull { it.isJsonPrimitive }
+                    ?.asString
+                    ?.substringBefore('/')
+                else -> null
+            }.orEmpty()
+            if (host.isNotBlank()) {
+                val port = settings.get("port")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                return if (port.isBlank()) host else "$host:$port"
+            }
+        }
+        settings.getAsJsonArray("vnext")
+            ?.firstOrNull()
+            ?.takeIf { it.isJsonObject }
+            ?.asJsonObject
+            ?.let { vnext ->
+                val host = vnext.get("address")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                val port = vnext.get("port")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                if (host.isNotBlank()) {
+                    return if (port.isBlank()) host else "$host:$port"
+                }
+            }
+        settings.getAsJsonArray("servers")
+            ?.firstOrNull()
+            ?.takeIf { it.isJsonObject }
+            ?.asJsonObject
+            ?.let { server ->
+                val host = server.get("address")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                val port = server.get("port")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                if (host.isNotBlank()) {
+                    return if (port.isBlank()) host else "$host:$port"
+                }
+            }
+        settings.getAsJsonArray("peers")
+            ?.firstOrNull()
+            ?.takeIf { it.isJsonObject }
+            ?.asJsonObject
+            ?.get("endpoint")
+            ?.takeIf { it.isJsonPrimitive }
+            ?.asString
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
+        return ""
     }
 
     /**
@@ -596,14 +791,14 @@ object CoreServiceManager {
             } else {
                 service.getString(R.string.connection_test_error, errorStr)
             }
-            MessageUtil.sendMsg2UI(service, AppConfig.MSG_MEASURE_DELAY_SUCCESS, result)
 
-            // Only fetch IP info if the delay test was successful
-            if (time >= 0) {
-                SpeedtestManager.getRemoteIPInfo()?.let { ip ->
-                    MessageUtil.sendMsg2UI(service, AppConfig.MSG_MEASURE_DELAY_SUCCESS, "$result\n$ip")
-                }
+            // Send a single final message (with IP when available) so the UI does not flicker.
+            val content = if (time >= 0) {
+                SpeedtestManager.getRemoteIPInfo()?.let { ip -> "$result\n$ip" } ?: result
+            } else {
+                result
             }
+            MessageUtil.sendMsg2UI(service, AppConfig.MSG_MEASURE_DELAY_SUCCESS, content)
         }
     }
 
@@ -612,7 +807,7 @@ object CoreServiceManager {
      * @return The current service instance, or null if not available.
      */
     private fun getService(): Service? {
-        return serviceControl?.get()?.getService()
+        return serviceControl?.getService()
     }
 
     /**
@@ -636,9 +831,12 @@ object CoreServiceManager {
             if (suppressShutdownStop) {
                 return 0
             }
-            val serviceControl = serviceControl?.get() ?: return -1
+            FailureLogRecorder.breadcrumb("CORE_CALLBACK_SHUTDOWN", forceDisk = true)
+            val control = serviceControl ?: return -1
             return try {
-                serviceControl.stopService()
+                // Native callbacks must not tear down on the calling thread if it can
+                // be the main looper; stop is always dispatched to IO.
+                serviceActionScope.launch { control.stopService() }
                 0
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop service", e)
@@ -719,13 +917,13 @@ object CoreServiceManager {
          * @param intent The intent being received.
          */
         override fun onReceive(ctx: Context?, intent: Intent?) {
-            val serviceControl = serviceControl?.get() ?: return
+            val control = serviceControl ?: return
             when (intent?.getIntExtra("key", 0)) {
                 AppConfig.MSG_REGISTER_CLIENT -> {
-                    if (coreController.isRunning) {
-                        MessageUtil.sendMsg2UI(serviceControl.getService(), AppConfig.MSG_STATE_RUNNING, "")
+                    if (control.isServiceActive()) {
+                        MessageUtil.sendMsg2UI(control.getService(), AppConfig.MSG_STATE_RUNNING, "")
                     } else {
-                        MessageUtil.sendMsg2UI(serviceControl.getService(), AppConfig.MSG_STATE_NOT_RUNNING, "")
+                        MessageUtil.sendMsg2UI(control.getService(), AppConfig.MSG_STATE_NOT_RUNNING, "")
                     }
                 }
 
@@ -739,25 +937,46 @@ object CoreServiceManager {
 
                 AppConfig.MSG_STATE_STOP -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Stop service")
-                    serviceControl.stopService()
+                    // BroadcastReceiver runs on the main thread; never call stopLoop here.
+                    serviceActionScope.launch {
+                        control.stopService()
+                    }
                 }
 
                 AppConfig.MSG_STATE_RESTART -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Restart service")
-                    val appContext = serviceControl.getService().applicationContext
-                    CoroutineScope(Dispatchers.IO).launch {
-                        serviceControl.stopService()
+                    val appContext = control.getService().applicationContext
+                    serviceActionScope.launch {
+                        control.stopService()
+                        // stopSelf() is asynchronous. Starting immediately can
+                        // deliver the new intent to the dying instance before
+                        // onDestroy removes root rules/closes the old TUN.
+                        val deadline = SystemClock.elapsedRealtime() + 15_000L
+                        while (serviceControl === control &&
+                            SystemClock.elapsedRealtime() < deadline
+                        ) {
+                            delay(50L)
+                        }
+                        if (serviceControl === control) {
+                            LogUtil.w(AppConfig.TAG, "StartCore-Manager: Service teardown timed out before restart")
+                        }
                         startVService(appContext)
                     }
                 }
 
                 AppConfig.MSG_STATE_RELOAD -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Soft reload service")
-                    serviceControl.reloadService()
+                    serviceActionScope.launch {
+                        control.reloadService()
+                    }
                 }
 
                 AppConfig.MSG_MEASURE_DELAY -> {
                     measureV2rayDelay()
+                }
+
+                AppConfig.MSG_BATTERY_STATS_SETTING_CHANGED -> {
+                    NotificationManager.updateBatteryUsageTracking()
                 }
             }
 
@@ -765,13 +984,19 @@ object CoreServiceManager {
                 Intent.ACTION_SCREEN_OFF -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Screen off")
                     PriorityFailoverManager.onScreenStateChanged(interactive = false)
-                    NotificationManager.stopSpeedNotification()
                 }
 
                 Intent.ACTION_SCREEN_ON -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Screen on")
                     PriorityFailoverManager.onScreenStateChanged(interactive = true)
-                    NotificationManager.startSpeedNotification()
+                }
+
+                PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED -> {
+                    val idle = ctx?.getSystemService(PowerManager::class.java)?.isDeviceIdleMode == true
+                    LogUtil.i(AppConfig.TAG, "StartCore-Manager: Device idle mode=$idle")
+                    if (!idle) {
+                        PriorityFailoverManager.onDeviceExitedIdle()
+                    }
                 }
             }
         }

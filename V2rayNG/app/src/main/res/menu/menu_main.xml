@@ -2,15 +2,14 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <item
-        android:id="@+id/search_view"
-        android:icon="@drawable/ic_outline_filter_alt_24"
-        android:title="@string/menu_item_search"
-        app:actionViewClass="androidx.appcompat.widget.SearchView"
-        app:showAsAction="always|collapseActionView" />
-    <item
-        android:id="@+id/add_subscription_clipboard"
+        android:id="@+id/add_config"
         android:icon="@drawable/ic_add_24dp"
-        android:title="@string/title_add_subscription_clipboard"
+        android:title="@string/menu_item_add_config"
+        app:showAsAction="always" />
+    <item
+        android:id="@+id/import_clipboard"
+        android:icon="@drawable/ic_content_paste_24dp"
+        android:title="@string/menu_item_import_config_clipboard"
         app:showAsAction="always" />
     <item
         android:id="@+id/service_restart"

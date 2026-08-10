@@ -1,0 +1,42 @@
+{
+  "Name": "RoscomVPN Whitelist",
+  "GlobalProxy": "true",
+  "RouteOrder": "block-proxy-direct",
+  "RemoteDNSType": "DoH",
+  "RemoteDNSDomain": "https://8.8.8.8/dns-query",
+  "RemoteDNSIP": "8.8.8.8",
+  "DomesticDNSType": "DoH",
+  "DomesticDNSDomain": "https://77.88.8.8/dns-query",
+  "DomesticDNSIP": "77.88.8.8",
+  "DnsHosts": {
+    "lkfl2.nalog.ru": "213.24.64.175",
+    "lknpd.nalog.ru": "213.24.64.181"
+  },
+  "DirectSites": [
+    "keyword:mtalk.google.com",
+    "domain:mtalk.google.com",
+    "geosite:private",
+    "geosite:whitelist"
+  ],
+  "DirectIp": [
+    "geoip:private",
+    "geoip:whitelist"
+  ],
+  "ProxySites": [
+    "domain:sberbank.ru",
+    "domain:sberbank.com",
+    "domain:sber.ru",
+    "domain:sberbank.app",
+    "domain:sberdevices.ru",
+    "domain:tbank.ru",
+    "domain:tinkoff.ru",
+    "domain:tinkoff.com",
+    "domain:tcsbank.ru"
+  ],
+  "ProxyIp": [],
+  "BlockSites": [],
+  "BlockIp": [],
+  "DomainStrategy": "IPIfNonMatch",
+  "FakeDNS": "false",
+  "UseChunkFiles": "true"
+}

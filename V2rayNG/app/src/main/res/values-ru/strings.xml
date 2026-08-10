@@ -1,21 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="title_pref_priority_probe_intervals">Интервалы проверки подключения</string>
+    <string name="summary_pref_priority_probe_intervals_default">Экран включён: 15 с; экран выключен: 300 с</string>
+    <string name="summary_pref_priority_probe_intervals_value">Экран включён: %1$d с; экран выключен: %2$d с</string>
+    <string name="label_probe_interval_screen_on">При включённом экране (секунды, 2–86400)</string>
+    <string name="label_probe_interval_screen_off">При выключенном экране (секунды, 10–86400)</string>
+    <string name="error_invalid_probe_intervals">Укажите интервалы в допустимых диапазонах</string>
     <string name="vpn_notification_channel_name">Подключение %1$s</string>
     <string name="vpn_notification_title">%1$s · %2$s</string>
     <string name="zeus_status_connecting">ПОДКЛЮЧЕНИЕ…</string>
     <string name="zeus_status_connected">ЗАЩИЩЕНО</string>
-    <string name="zeus_status_disconnected">НЕ ПОДКЛЮЧЕНО</string>
+    <string name="zeus_status_disconnected">ВКЛЮЧИТЬ</string>
     <string name="zeus_profiles_title">Профили</string>
     <string name="zeus_choose_profile">Выберите подключение</string>
     <string name="zeus_no_profile">Профиль не выбран</string>
+    <string name="connection_test_title">Проверка соединения</string>
+    <string name="title_ui_animations">Анимации</string>
     <string name="subscription_default_name">Подписка</string>
     <string name="local_profiles_name">Личные профили</string>
     <string name="subscription_profile_count">%1$d конфигураций — нажмите, чтобы раскрыть</string>
     <string name="subscription_profile_count_expanded">%1$d конфигураций — нажмите, чтобы свернуть</string>
     <string name="title_view_config">Просмотр конфигурации</string>
     <string name="title_add_subscription_clipboard">Добавить подписку из буфера</string>
+    <string name="title_add_config_manual">Ввести конфиг вручную</string>
+    <string name="hint_add_config_manual">Вставьте vmess://, vless://, ss://, trojan:// или ссылку подписки</string>
+    <string name="menu_item_import_config_manual">Ввести вручную</string>
     <string name="subscription_updated_at">Обновлено: %1$s · профилей: %2$d</string>
     <string name="subscription_never_updated">Ещё не обновлялась · профилей: %1$d</string>
+    <string name="subscription_traffic">Использовано %1$s из %2$s</string>
+    <string name="subscription_time_left">Осталось %1$d дн. %2$d ч.</string>
+    <string name="subscription_expired">Срок подписки истёк</string>
+    <string name="subscription_traffic_compact">%1$s / %2$s</string>
+    <string name="subscription_traffic_unlimited">%1$s / ∞</string>
+    <string name="subscription_expires_at">До %1$s\nОсталось %2$d дн.</string>
     <string name="subscription_auto_update_interval">Автообновление: %1$s</string>
     <string name="subscription_auto_update_off">Автообновление выключено</string>
     <string name="subscription_interval_hours">%1$d ч.</string>
@@ -28,8 +45,8 @@
     <string name="geo_update_success">GeoIP/GeoSite обновлены. Переподключение…</string>
     <string name="geo_update_ready">Файлы GeoIP/GeoSite готовы.</string>
     <string name="geo_update_failed">Не удалось обновить GeoIP/GeoSite. Попытка повторится автоматически.</string>
-    <string name="app_widget_name">ЗимаVPN</string>
-    <string name="app_tile_name">ЗимаVPN</string>
+    <string name="app_widget_name">Winter</string>
+    <string name="app_tile_name">Winter</string>
     <string name="app_tile_first_use">Первое использование этой функции, пожалуйста, используйте приложение, чтобы добавить профиль</string>
     <string name="navigation_drawer_open">Открыть панель навигации</string>
     <string name="navigation_drawer_close">Закрыть панель навигации</string>
@@ -187,6 +204,12 @@
     <string name="title_advanced">Расширенные настройки</string>
     <string name="title_core_settings">Настройки ядра</string>
     <string name="title_vpn_settings">Настройки VPN</string>
+    <string name="title_reset_settings">Сброс</string>
+    <string name="title_pref_reset_settings">Сбросить настройки</string>
+    <string name="summary_pref_reset_settings">Вернуть настройки приложения к значениям по умолчанию. Подписки и профили сохранятся.</string>
+    <string name="dialog_reset_settings_title">Сбросить настройки?</string>
+    <string name="dialog_reset_settings_message">Все настройки приложения будут возвращены к значениям по умолчанию. Подписки и профили серверов не удалятся.</string>
+    <string name="toast_settings_reset">Настройки сброшены</string>
     <string name="title_pref_per_app_proxy">Прокси для выбранных приложений</string>
     <string name="summary_pref_per_app_proxy">Основной: выбранное приложение соединяется через прокси, не выбранное — напрямую;\nРежим обхода: выбранное приложение соединяется напрямую, не выбранное — через прокси.\nЕсть возможность автоматического выбора проксируемых приложений в меню.</string>
     <string name="title_pref_is_booted">Автоподключение при запуске</string>
@@ -238,12 +261,33 @@
     <string name="title_pref_vpn_interface_address">Адрес интерфейса VPN</string>
 
     <string name="title_pref_vpn_mtu">VPN MTU (по умолчанию 1500)</string>
+    <string name="title_pref_custom_mtu">Настраивать MTU</string>
+    <string name="summary_pref_custom_mtu">По умолчанию выключено — используется MTU активного линка Android без вычитания. Включите, чтобы задать значение вручную или использовать адаптивный подбор.</string>
     <string name="title_pref_adaptive_mtu">Адаптивный MTU</string>
-    <string name="summary_pref_adaptive_mtu">Подбирает более безопасный MTU для активной мобильной сети или Wi‑Fi. После изменения переподключите VPN.</string>
+    <string name="summary_pref_adaptive_mtu">При включении использует подобранный path MTU для текущего Wi‑Fi или мобильного линка без дополнительного вычитания (или MTU Android, пока не подберёте). После изменения переподключите VPN.</string>
+    <string name="title_pref_probe_mtu_wifi">Подобрать MTU для Wi‑Fi</string>
+    <string name="title_pref_probe_mtu_cellular">Подобрать MTU для LTE</string>
+    <string name="summary_pref_probe_mtu_unset">Не задан — будет MTU линка Android</string>
+    <string name="summary_pref_probe_mtu_value">Сохранено: %1$d (нажмите, чтобы подобрать снова)</string>
+    <string name="summary_pref_probe_mtu_wrong_transport">Подключитесь к этой сети, чтобы подобрать</string>
+    <string name="summary_pref_probe_mtu_running">Подбор path MTU (DF)…</string>
+    <string name="toast_probe_mtu_success">Path MTU сохранён: %1$d</string>
+    <string name="toast_probe_mtu_failed">Не удалось подобрать path MTU</string>
     <string name="title_pref_notification_show_mtu">Показывать MTU в уведомлении</string>
     <string name="summary_pref_notification_show_mtu">Показывает текущее эффективное значение MTU при подключении.</string>
     <string name="title_pref_notification_show_active_outbound">Показывать активный маршрут в уведомлении</string>
-    <string name="summary_pref_notification_show_active_outbound">Показывает маршрут, через который прошёл последний трафик прокси.</string>
+    <string name="summary_pref_notification_show_active_outbound">Показывает маршрут Smart Priority, выбранный для прокси-трафика.</string>
+    <string name="title_pref_notification_show_routing_mode">Показывать режим маршрутизации в уведомлении</string>
+    <string name="summary_pref_notification_show_routing_mode">Отладка: показывает, используется ли default (p0–p4) или whitelist (p5+) маршрутизация Smart Priority.</string>
+    <string name="notification_routing_mode">Маршрутизация: %1$s</string>
+    <string name="notification_routing_mode_default">default</string>
+    <string name="notification_routing_mode_whitelist">whitelist</string>
+    <string name="title_pref_notification_show_battery_usage">Показывать расход батареи Winter</string>
+    <string name="summary_pref_notification_show_battery_usage">Необязательная оценка энергии UID приложения средствами Android с момента запуска VPN. Когда выключено, статистика батареи не собирается.</string>
+    <string name="notification_battery_usage">Winter: ≈%1$.3f%% · ≈%2$.2f мА·ч · %3$.3f%%/ч</string>
+    <string name="notification_battery_usage_mah">Winter: ≈%1$.1f мА·ч</string>
+    <string name="notification_battery_usage_waiting">Winter: сбор статистики батареи…</string>
+    <string name="notification_battery_usage_unavailable">Winter: энергостатистика недоступна</string>
 
 
     <string name="title_pref_domestic_dns">Внутренняя DNS (необязательно)</string>
@@ -313,6 +357,10 @@
     <string name="title_pref_auto_update_interval">Интервал автообновления (минут, не менее 15)</string>
 
     <string name="title_core_loglevel">Подробность ведения журнала</string>
+    <string name="title_pref_failure_log_enabled">Записывать логи падений</string>
+    <string name="summary_pref_failure_log_enabled">По умолчанию выкл. Сохраняет только сбои VPN и ближайшие события — без постоянного логирования, почти не влияет на батарею.</string>
+    <string name="title_pref_failure_log_view">Логи падений</string>
+    <string name="summary_pref_failure_log_view">Просмотр, отправка или очистка сохранённых отчётов.</string>
     <string name="title_outbound_domain_resolve_method">Предопределение исходящего домена</string>
     <string name="title_mode">Режим</string>
     <string name="title_mode_help">Нажмите для получения дополнительной информации</string>
@@ -346,7 +394,16 @@
     <string name="sub_setting_filter">Название фильтра</string>
     <string name="sub_setting_enable">Использовать обновление</string>
     <string name="sub_auto_update">Использовать автообновление</string>
+    <string name="sub_auto_switch">Автопереключение серверов</string>
+    <string name="sub_auto_switch_summary">Выбирать самый быстрый рабочий сервер и переключаться при сбое</string>
     <string name="sub_allow_insecure_url">Разрешать незащищённые HTTP-адреса</string>
+    <string name="title_measure_subscription_delay">Измерить задержку подписки</string>
+    <string name="title_auto_switch_connect">Подключить с автовыбором</string>
+    <string name="subscription_show_more">Показать ещё (%d)</string>
+    <string name="subscription_auto_switch_selecting">Выбор лучшего сервера…</string>
+    <string name="subscription_auto_switch_no_server">В подписке нет рабочих серверов</string>
+    <string name="subscription_auto_switch_started">Подключено с автовыбором: %s</string>
+    <string name="subscription_auto_switch_failover">Переключено на запасной: %s</string>
     <string name="sub_setting_pre_profile">Предыдущий профиль прокси</string>
     <string name="sub_setting_next_profile">Следующий профиль прокси</string>
     <string name="sub_setting_pre_profile_tip">Профиль должен быть уникальным</string>
@@ -395,15 +452,15 @@
     <string name="routing_settings_network_tip">[udp|tcp]</string>
     <string name="routing_settings_outbound_tag">Исходящее соединение</string>
 
-    <string name="connection_test_pending">Проверить соединение</string>
-    <string name="connection_test_testing">Проверка…</string>
+    <string name="connection_test_pending">Нажмите, чтобы проверить соединение</string>
+    <string name="connection_test_testing">Проверка соединения…</string>
     <string name="connection_test_testing_count">Проверка профилей (%d)</string>
     <string name="connection_test_available">Успешно: соединение заняло %d мс</string>
     <string name="connection_test_error">Сбой проверки интернет-соединения: %s</string>
     <string name="connection_test_fail">Интернет недоступен</string>
     <string name="connection_test_error_status_code">Код ошибки: #%d</string>
-    <string name="connection_connected">Соединено, нажмите для проверки</string>
-    <string name="connection_not_connected">Нет соединения</string>
+    <string name="connection_connected">Соединено — нажмите для проверки</string>
+    <string name="connection_not_connected">Сначала подключитесь, чтобы проверить соединение</string>
     <string name="connection_runing_task_left">Запущено проверок: %s</string>
 
     <string name="import_subscription_success">Подписка импортирована</string>
@@ -483,7 +540,6 @@
     <string-array name="browser_dialer_mode">
         <item>Отключено</item>
         <item>OkHttp</item>
-        <item>WebView</item>
     </string-array>
 
     <string-array name="ui_mode_night">

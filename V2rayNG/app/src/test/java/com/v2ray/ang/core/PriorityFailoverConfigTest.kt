@@ -39,7 +39,7 @@ class PriorityFailoverConfigTest {
     ).asJsonObject
 
     @Test
-    fun detectsMultipleRoutesInOneTierAndActivatesSelectedRoute() {
+    fun detectsMultipleRoutesInOneTierAndActivatesAllRoutesForSeamlessFailover() {
         val plan = PriorityFailoverConfig.detect(source)!!
         assertEquals(
             listOf("route-p0000-a", "route-p0000-c", "route-p0001-b"),
@@ -63,13 +63,16 @@ class PriorityFailoverConfigTest {
             ),
         )
         val root = runtime.getAsJsonObject("routing").getAsJsonArray("balancers")[0].asJsonObject
-        assertEquals(listOf("route-p0000-c"), root.getAsJsonArray("selector").map { it.asString })
-        assertEquals("random", root.getAsJsonObject("strategy").get("type").asString)
+        assertEquals(
+            listOf("route-p0000-a", "route-p0000-c", "route-p0001-b"),
+            root.getAsJsonArray("selector").map { it.asString },
+        )
+        assertEquals("leastLoad", root.getAsJsonObject("strategy").get("type").asString)
         assertFalse(root.has("fallbackTag"))
         val second = runtime.getAsJsonObject("routing").getAsJsonArray("balancers")[1].asJsonObject
-        assertEquals("random", second.getAsJsonObject("strategy").get("type").asString)
+        assertEquals("leastLoad", second.getAsJsonObject("strategy").get("type").asString)
         assertFalse(second.has("fallbackTag"))
-        assertFalse(runtime.has("burstObservatory"))
+        assertTrue(runtime.has("burstObservatory"))
         assertTrue(source.has("burstObservatory"))
         val probeInbound = runtime.getAsJsonArray("inbounds")[0].asJsonObject
         assertEquals("priority-probe-in-0", probeInbound.get("tag").asString)

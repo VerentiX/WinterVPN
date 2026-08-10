@@ -600,6 +600,13 @@ object MmkvManager {
     }
 
     /**
+     * Clears all keys from the settings store.
+     */
+    fun clearSettings() {
+        settingsStorage.clearAll()
+    }
+
+    /**
      * Decodes the settings string.
      *
      * @param key The settings key.

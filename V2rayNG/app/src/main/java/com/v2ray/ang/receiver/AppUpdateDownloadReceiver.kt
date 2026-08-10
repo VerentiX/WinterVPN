@@ -36,7 +36,7 @@ class AppUpdateDownloadReceiver : BroadcastReceiver() {
         val installIntent = Intent(Intent.ACTION_VIEW)
             .setDataAndType(apkUri, AppUpdateInstaller.APK_MIME_TYPE)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-            .apply { clipData = ClipData.newRawUri("ZimaVPN update", apkUri) }
+            .apply { clipData = ClipData.newRawUri("Winter update", apkUri) }
         val pendingIntent = PendingIntent.getActivity(
             context,
             1402,

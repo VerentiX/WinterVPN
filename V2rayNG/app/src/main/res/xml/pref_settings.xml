@@ -4,11 +4,6 @@
 
     <PreferenceCategory android:title="@string/title_ui_settings">
         <CheckBoxPreference
-            android:key="pref_speed_enabled"
-            android:summary="@string/summary_pref_speed_enabled"
-            android:title="@string/title_pref_speed_enabled" />
-
-        <CheckBoxPreference
             android:key="pref_confirm_remove"
             android:summary="@string/summary_pref_confirm_remove"
             android:title="@string/title_pref_confirm_remove" />
@@ -35,14 +30,6 @@
             android:key="pref_language"
             android:summary="%s"
             android:title="@string/title_language" />
-
-        <ListPreference
-            android:defaultValue="0"
-            android:entries="@array/ui_mode_night"
-            android:entryValues="@array/ui_mode_night_value"
-            android:key="pref_ui_mode_night"
-            android:summary="%s"
-            android:title="@string/title_pref_ui_mode_night" />
 
     </PreferenceCategory>
 
@@ -104,7 +91,14 @@
             android:summary="%s"
             android:title="@string/title_pref_vpn_interface_address" />
 
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="pref_custom_mtu_enabled"
+            android:summary="@string/summary_pref_custom_mtu"
+            android:title="@string/title_pref_custom_mtu" />
+
         <EditTextPreference
+            android:dependency="pref_custom_mtu_enabled"
             android:inputType="number"
             android:key="pref_vpn_mtu"
             android:summary="1500"
@@ -112,9 +106,22 @@
 
         <CheckBoxPreference
             android:defaultValue="false"
+            android:dependency="pref_custom_mtu_enabled"
             android:key="pref_adaptive_mtu_enabled"
             android:summary="@string/summary_pref_adaptive_mtu"
             android:title="@string/title_pref_adaptive_mtu" />
+
+        <Preference
+            android:dependency="pref_adaptive_mtu_enabled"
+            android:key="pref_probe_mtu_wifi"
+            android:summary="@string/summary_pref_probe_mtu_unset"
+            android:title="@string/title_pref_probe_mtu_wifi" />
+
+        <Preference
+            android:dependency="pref_adaptive_mtu_enabled"
+            android:key="pref_probe_mtu_cellular"
+            android:summary="@string/summary_pref_probe_mtu_unset"
+            android:title="@string/title_pref_probe_mtu_cellular" />
 
         <CheckBoxPreference
             android:defaultValue="false"
@@ -129,10 +136,16 @@
             android:title="@string/title_pref_notification_show_active_outbound" />
 
         <CheckBoxPreference
-            android:defaultValue="true"
-            android:key="pref_use_hev_tunnel_v2"
-            android:summary="@string/summary_pref_use_hev_tunnel"
-            android:title="@string/title_pref_use_hev_tunnel" />
+            android:defaultValue="false"
+            android:key="pref_notification_show_routing_mode"
+            android:summary="@string/summary_pref_notification_show_routing_mode"
+            android:title="@string/title_pref_notification_show_routing_mode" />
+
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="pref_notification_show_battery_usage"
+            android:summary="@string/summary_pref_notification_show_battery_usage"
+            android:title="@string/title_pref_notification_show_battery_usage" />
 
         <ListPreference
             android:defaultValue="warn"
@@ -149,6 +162,11 @@
     </PreferenceCategory>
 
     <PreferenceCategory android:title="@string/title_core_settings">
+
+        <Preference
+            android:key="pref_priority_probe_intervals"
+            android:summary="@string/summary_pref_priority_probe_intervals_default"
+            android:title="@string/title_pref_priority_probe_intervals" />
 
         <CheckBoxPreference
             android:defaultValue="true"
@@ -244,6 +262,17 @@
             android:key="pref_connection_journal"
             android:title="Открыть журнал соединений"
             android:summary="Доступно после включения диагностики приложений." />
+
+        <CheckBoxPreference
+            android:key="pref_failure_log_enabled"
+            android:defaultValue="false"
+            android:title="@string/title_pref_failure_log_enabled"
+            android:summary="@string/summary_pref_failure_log_enabled" />
+
+        <Preference
+            android:key="pref_failure_log_view"
+            android:title="@string/title_pref_failure_log_view"
+            android:summary="@string/summary_pref_failure_log_view" />
 
     </PreferenceCategory>
 
@@ -367,6 +396,15 @@
             android:summary="@string/summary_root_lan_sharing"
             android:title="@string/title_root_lan_sharing" />
 
+
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="@string/title_reset_settings">
+
+        <Preference
+            android:key="pref_reset_settings"
+            android:summary="@string/summary_pref_reset_settings"
+            android:title="@string/title_pref_reset_settings" />
 
     </PreferenceCategory>
 

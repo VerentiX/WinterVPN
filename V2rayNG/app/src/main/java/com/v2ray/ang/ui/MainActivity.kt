@@ -1,20 +1,25 @@
 package com.v2ray.ang.ui
 
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Intent
+import android.graphics.Color
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.LinearInterpolator
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.widget.SearchView
 import androidx.core.view.GravityCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -29,11 +34,13 @@ import com.v2ray.ang.dto.entities.SubscriptionCache
 import com.v2ray.ang.enums.PermissionType
 import com.v2ray.ang.extension.toast
 import com.v2ray.ang.extension.toastError
+import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.GeoAssetUpdater
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsChangeManager
 import com.v2ray.ang.handler.SettingsManager
+import com.v2ray.ang.handler.SubscriptionRefreshManager
 import com.v2ray.ang.handler.SubscriptionUpdater
 import com.v2ray.ang.util.Utils
 import com.v2ray.ang.viewmodel.MainViewModel
@@ -50,6 +57,9 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     val mainViewModel: MainViewModel by viewModels()
     private lateinit var subscriptionCardAdapter: SubscriptionCardAdapter
     private var geoProgressVisible = false
+    private var powerRingAnimator: ObjectAnimator? = null
+    private var lastAppliedRunningState: Boolean? = null
+    private var winterEffectsActive = false
     private val geoUpdateStatus by lazy { findViewById<TextView>(R.id.tv_geo_update_status) }
 
     private val requestVpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -83,6 +93,11 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
             override fun onUpdateSubscription(subscription: SubscriptionCache) {
                 updateSubscription(subscription)
             }
+            override fun onMeasureSubscription(subscriptionId: String) {
+                val count = MmkvManager.decodeServerList(subscriptionId).size
+                toast(getString(R.string.connection_test_testing_count, count))
+                mainViewModel.testSubscriptionRealPing(subscriptionId)
+            }
             override fun onEditSubscription(subscriptionId: String) {
                 requestActivityLauncher.launch(
                     Intent(this@MainActivity, SubEditActivity::class.java).putExtra("subId", subscriptionId)
@@ -97,6 +112,8 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
         binding.fab.setOnClickListener { handleFabAction() }
         binding.layoutTest.setOnClickListener { handleLayoutTestClick() }
+        setupPowerButtonPressFeedback()
+        setupAnimationToggle()
         setupGroupTab()
         setupViewModel()
         SubscriptionUpdater.sync()
@@ -104,6 +121,84 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
         checkAndRequestPermission(PermissionType.POST_NOTIFICATIONS) {
         }
+    }
+
+    private fun isWinterAnimationsEnabled(): Boolean {
+        return MmkvManager.decodeSettingsBool(AppConfig.PREF_UI_WINTER_ANIMATIONS, true)
+    }
+
+    private fun setupAnimationToggle() {
+        binding.switchAnimations.setOnCheckedChangeListener(null)
+        binding.switchAnimations.isChecked = isWinterAnimationsEnabled()
+        // Switch is visual only — whole chip (label, padding, switch) toggles via the bar.
+        binding.switchAnimations.isClickable = false
+        binding.switchAnimations.isFocusable = false
+        binding.switchAnimations.setOnCheckedChangeListener { _, isChecked ->
+            MmkvManager.encodeSettings(AppConfig.PREF_UI_WINTER_ANIMATIONS, isChecked)
+            applyAnimationPreference(isChecked)
+        }
+        binding.animationToggleBar.setOnClickListener {
+            binding.switchAnimations.toggle()
+        }
+    }
+
+    private fun applyAnimationPreference(enabled: Boolean) {
+        if (enabled) {
+            if (mainViewModel.isRunning.value == true) {
+                setWinterEffectsEnabled(true, animate = true)
+                binding.powerGlow.animate().alpha(1f).setDuration(220L).start()
+                startConnectedPulseIfNeeded()
+            }
+        } else {
+            setWinterEffectsEnabled(false, animate = true)
+            binding.powerGlow.animate().cancel()
+            binding.powerGlow.alpha = 0f
+            binding.fab.clearAnimation()
+            // Keep a clean pressable button without ambient pulse/glow/frost.
+            binding.fab.animate().scaleX(1f).scaleY(1f).setDuration(160L).start()
+        }
+    }
+
+    private fun setupPowerButtonPressFeedback() {
+        binding.fab.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (view.isEnabled) {
+                        view.clearAnimation()
+                        view.animate().cancel()
+                        view.animate()
+                            .scaleX(0.96f)
+                            .scaleY(0.96f)
+                            .setDuration(120L)
+                            .setInterpolator(DecelerateInterpolator())
+                            .start()
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    view.animate().cancel()
+                    view.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(220L)
+                        .setInterpolator(DecelerateInterpolator())
+                        .withEndAction {
+                            if (mainViewModel.isRunning.value == true &&
+                                !isPowerLoading() &&
+                                isWinterAnimationsEnabled()
+                            ) {
+                                startConnectedPulseIfNeeded()
+                            }
+                        }
+                        .start()
+                }
+            }
+            false
+        }
+    }
+
+    private fun isPowerLoading(): Boolean {
+        return binding.powerLoadingRing.visibility == View.VISIBLE &&
+            (powerRingAnimator?.isRunning == true)
     }
 
     private fun setupNavigationDrawer() {
@@ -133,9 +228,16 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
     private fun setupViewModel() {
         mainViewModel.updateTestResultAction.observe(this) { setTestState(it) }
-        mainViewModel.updateListAction.observe(this) {
-            subscriptionCardAdapter.reload()
+        mainViewModel.updateListAction.observe(this) { index ->
+            if (index == null || index < 0) {
+                subscriptionCardAdapter.reload()
+            } else {
+                subscriptionCardAdapter.notifyProfileStatusChanged()
+            }
             updateConnectButtonAvailability()
+        }
+        mainViewModel.profileDelayUpdatedAction.observe(this) { guid ->
+            subscriptionCardAdapter.notifyProfileStatusChanged(guid.ifEmpty { null })
         }
         mainViewModel.geoDataRepairAction.observe(this) {
             showGeoUpdateProgress(getString(R.string.geo_update_repairing), 0)
@@ -151,6 +253,9 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         }
         mainViewModel.isRunning.observe(this) { isRunning ->
             applyRunningState(false, isRunning)
+            if (isRunning == true) {
+                subscriptionCardAdapter.notifyProfileStatusChanged()
+            }
         }
         mainViewModel.startListenBroadcast()
         mainViewModel.initAssets(assets)
@@ -257,7 +362,7 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
             setTestState(getString(R.string.connection_test_testing))
             mainViewModel.testCurrentServerRealPing()
         } else {
-            // service not running: keep existing no-op (could show a message if desired)
+            toast(getString(R.string.connection_not_connected))
         }
     }
 
@@ -295,69 +400,270 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     }
 
     private fun setupSnowAnimation() {
+        if (!isWinterAnimationsEnabled()) {
+            binding.frostOverlay.setFrozenImmediate(false)
+            binding.animationSnow.cancelAnimation()
+            binding.animationSnow.visibility = View.GONE
+            return
+        }
         binding.animationSnow.addLottieOnCompositionLoadedListener {
-            if (mainViewModel.isRunning.value == true) {
-                setSnowAnimationEnabled(true)
+            if (mainViewModel.isRunning.value == true && isWinterAnimationsEnabled()) {
+                setWinterEffectsEnabled(true, animate = false)
+            }
+        }
+        if (mainViewModel.isRunning.value == true) {
+            binding.frostOverlay.post {
+                if (!isWinterAnimationsEnabled()) return@post
+                winterEffectsActive = true
+                binding.frostOverlay.setFrozenImmediate(true, binding.fab, binding.layoutTest)
             }
         }
     }
 
     private fun setSnowAnimationEnabled(enabled: Boolean) {
-        binding.animationSnow.apply {
+        setWinterEffectsEnabled(enabled, animate = true)
+    }
+
+    private fun setWinterEffectsEnabled(enabled: Boolean, animate: Boolean = true) {
+        if (enabled && !isWinterAnimationsEnabled()) {
+            // Still allow forced cleanup path via enabled=false.
+            setWinterEffectsEnabled(false, animate = false)
+            return
+        }
+        if (enabled) {
+            winterEffectsActive = true
+            if (animate) {
+                binding.frostOverlay.freezeFrom(binding.fab, binding.layoutTest)
+            } else {
+                binding.frostOverlay.setFrozenImmediate(true, binding.fab, binding.layoutTest)
+            }
+            binding.animationSnow.apply {
+                // Full-screen snowfall; cracks are clipped separately in FrostOverlayView.
+                val lp = layoutParams as? android.widget.FrameLayout.LayoutParams
+                if (lp != null) {
+                    lp.width = android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                    lp.height = android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                    lp.gravity = android.view.Gravity.CENTER
+                    layoutParams = lp
+                }
+                scaleX = 1.15f
+                scaleY = 1.08f
+                visibility = View.VISIBLE
+                if (!isAnimating) playAnimation()
+                animate().cancel()
+                if (animate) {
+                    alpha = 0f
+                    animate().alpha(0.4f).setDuration(1_200L)
+                        .setStartDelay(250L)
+                        .setInterpolator(DecelerateInterpolator())
+                        .start()
+                } else {
+                    alpha = 0.4f
+                }
+            }
+        } else {
+            if (!winterEffectsActive && animate) return
+            winterEffectsActive = false
+            if (animate) {
+                binding.frostOverlay.melt()
+                binding.animationSnow.animate().cancel()
+                binding.animationSnow.animate()
+                    .alpha(0f)
+                    .setDuration(700L)
+                    .withEndAction {
+                        binding.animationSnow.cancelAnimation()
+                        binding.animationSnow.visibility = View.GONE
+                    }
+                    .start()
+            } else {
+                binding.frostOverlay.setFrozenImmediate(false)
+                binding.animationSnow.animate().cancel()
+                binding.animationSnow.cancelAnimation()
+                binding.animationSnow.alpha = 0f
+                binding.animationSnow.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun startConnectedPulseIfNeeded() {
+        if (!isWinterAnimationsEnabled()) {
+            binding.fab.clearAnimation()
+            return
+        }
+        if (binding.fab.animation != null) return
+        // Very soft breathing — barely noticeable, no “jump”.
+        val pulseAnimation = android.view.animation.ScaleAnimation(
+            1.0f, 1.015f, 1.0f, 1.015f,
+            android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f,
+            android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f
+        ).apply {
+            duration = 2400
+            repeatCount = android.view.animation.Animation.INFINITE
+            repeatMode = android.view.animation.Animation.REVERSE
+            interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+            startOffset = 200
+        }
+        binding.fab.startAnimation(pulseAnimation)
+    }
+
+    /** Soft settle when state changes — no overshoot bounce. */
+    private fun playSoftStateTransition(onSettled: (() -> Unit)? = null) {
+        binding.fab.clearAnimation()
+        binding.fab.animate().cancel()
+        binding.powerBtnContent.animate().cancel()
+        binding.ivFabIcon.animate().cancel()
+
+        binding.fab.scaleX = 0.98f
+        binding.fab.scaleY = 0.98f
+        binding.fab.animate()
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(280L)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction { onSettled?.invoke() }
+            .start()
+    }
+
+    /**
+     * 3D flip in the button center: power ↔ shield (like a toggle face turn).
+     */
+    private fun playPowerIconFlip(
+        toIconRes: Int,
+        onSettled: (() -> Unit)? = null
+    ) {
+        val content = binding.powerBtnContent
+        content.animate().cancel()
+        content.cameraDistance = 12_000f * resources.displayMetrics.density
+
+        // Halfway out → swap face → halfway in
+        content.animate()
+            .rotationY(90f)
+            .setDuration(170L)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                binding.ivFabIcon.setImageResource(toIconRes)
+                content.rotationY = -90f
+                content.animate()
+                    .rotationY(0f)
+                    .setDuration(190L)
+                    .setInterpolator(DecelerateInterpolator())
+                    .withEndAction {
+                        content.rotationY = 0f
+                        onSettled?.invoke()
+                    }
+                    .start()
+            }
+            .start()
+    }
+
+    private fun setPowerLoading(enabled: Boolean) {
+        binding.powerLoadingRing.apply {
             if (enabled) {
                 visibility = View.VISIBLE
-                alpha = 0.7f
-                if (!isAnimating) {
-                    playAnimation()
+                animate().alpha(1f).setDuration(180L).start()
+                if (powerRingAnimator?.isRunning != true) {
+                    powerRingAnimator = ObjectAnimator.ofFloat(this, View.ROTATION, 0f, 360f).apply {
+                        duration = 900L
+                        repeatCount = ValueAnimator.INFINITE
+                        interpolator = LinearInterpolator()
+                        start()
+                    }
                 }
             } else {
-                cancelAnimation()
-                visibility = View.GONE
+                powerRingAnimator?.cancel()
+                powerRingAnimator = null
+                rotation = 0f
+                animate().alpha(0f).setDuration(160L).withEndAction {
+                    visibility = View.INVISIBLE
+                }.start()
             }
         }
     }
 
     private fun applyRunningState(isLoading: Boolean, isRunning: Boolean) {
+        val winterOn = isWinterAnimationsEnabled()
         if (isLoading) {
             binding.fab.isEnabled = false
-            binding.ivFabIcon.setImageResource(R.drawable.ic_fab_check)
+            setPowerLoading(true)
             binding.fab.clearAnimation()
+            binding.powerBtnContent.animate().cancel()
+            binding.powerBtnContent.rotationY = 0f
+            binding.ivFabIcon.setImageResource(R.drawable.ic_power_24dp)
+            if (winterOn) {
+                binding.powerGlow.animate().alpha(0.45f).setDuration(220L).start()
+            } else {
+                binding.powerGlow.animate().cancel()
+                binding.powerGlow.alpha = 0f
+            }
+            binding.fab.contentDescription = getString(R.string.zeus_status_connecting)
+            // Freeze starts from the button as soon as connect is pressed.
+            if (lastAppliedRunningState != true) {
+                if (winterOn) {
+                    winterEffectsActive = true
+                    binding.frostOverlay.freezeFrom(binding.fab, binding.layoutTest)
+                }
+            } else {
+                setWinterEffectsEnabled(false, animate = winterOn)
+            }
             return
         }
+
+        setPowerLoading(false)
 
         refreshSelectedProfile()
         updateConnectButtonAvailability(isRunning)
 
+        val stateChanged = lastAppliedRunningState != isRunning
+        lastAppliedRunningState = isRunning
+
         if (isRunning) {
-            binding.ivFabIcon.setImageResource(R.drawable.ic_stop_24dp)
             binding.fab.setBackgroundResource(R.drawable.bg_power_btn_active)
-
-            // Запуск анимации пульсации кнопки
-            val pulseAnimation = android.view.animation.ScaleAnimation(
-                1.0f, 1.04f, 1.0f, 1.04f,
-                android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f,
-                android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f
-            ).apply {
-                duration = 1500
-                repeatCount = android.view.animation.Animation.INFINITE
-                repeatMode = android.view.animation.Animation.REVERSE
-                interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+            if (winterOn) {
+                binding.powerGlow.animate().alpha(1f).setDuration(320L).start()
+            } else {
+                binding.powerGlow.animate().cancel()
+                binding.powerGlow.alpha = 0f
+                binding.fab.clearAnimation()
             }
-            binding.fab.startAnimation(pulseAnimation)
 
-            // ВКЛЮЧАЕМ АНИМАЦИЮ СНЕГА
-            setSnowAnimationEnabled(true)
+            if (stateChanged) {
+                if (winterOn) {
+                    setWinterEffectsEnabled(true, animate = true)
+                } else {
+                    setWinterEffectsEnabled(false, animate = false)
+                }
+                setTestState(getString(R.string.connection_connected))
+                playSoftStateTransition()
+                playPowerIconFlip(
+                    toIconRes = R.drawable.ic_shield_24dp,
+                ) {
+                    if (winterOn && !isPowerLoading()) {
+                        startConnectedPulseIfNeeded()
+                    }
+                }
+            } else {
+                binding.ivFabIcon.setImageResource(R.drawable.ic_shield_24dp)
+                if (winterOn) {
+                    startConnectedPulseIfNeeded()
+                }
+            }
 
             binding.fab.contentDescription = getString(R.string.action_stop_service)
-            setTestState(getString(R.string.connection_connected))
             binding.layoutTest.isFocusable = true
         } else {
-            binding.ivFabIcon.setImageResource(R.drawable.ic_play_24dp)
             binding.fab.setBackgroundResource(R.drawable.bg_power_btn_inactive)
             binding.fab.clearAnimation()
+            binding.powerGlow.animate().alpha(0f).setDuration(260L).start()
 
-            // ВЫКЛЮЧАЕМ АНИМАЦИЮ СНЕГА
-            setSnowAnimationEnabled(false)
+            setWinterEffectsEnabled(false, animate = winterOn)
+            if (stateChanged) {
+                playSoftStateTransition()
+                playPowerIconFlip(
+                    toIconRes = R.drawable.ic_power_24dp,
+                )
+            } else {
+                binding.ivFabIcon.setImageResource(R.drawable.ic_power_24dp)
+            }
 
             binding.fab.contentDescription = getString(R.string.tasker_start_service)
             setTestState(getString(R.string.connection_not_connected))
@@ -389,9 +695,23 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
     override fun onResume() {
         super.onResume()
+        mainViewModel.requestServiceState()
         refreshSelectedProfile()
         updateConnectButtonAvailability()
         if (::subscriptionCardAdapter.isInitialized) subscriptionCardAdapter.reload()
+        refreshSubscriptionsOnAppOpen()
+    }
+
+    private fun refreshSubscriptionsOnAppOpen() {
+        SubscriptionRefreshManager.refreshOnAppOpen { result ->
+            if (result.configCount > 0 || result.successCount > 0) {
+                mainViewModel.reloadServerList()
+                if (::subscriptionCardAdapter.isInitialized) {
+                    subscriptionCardAdapter.reload()
+                }
+                refreshSelectedProfile()
+            }
+        }
     }
 
     override fun onPause() {
@@ -401,31 +721,22 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_main, menu)
 
-        val searchItem = menu.findItem(R.id.search_view)
-        if (searchItem != null) {
-            val searchView = searchItem.actionView as SearchView
-            searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
-                override fun onQueryTextSubmit(query: String?): Boolean = false
-
-                override fun onQueryTextChange(newText: String?): Boolean {
-                    mainViewModel.filterConfig(newText.orEmpty())
-                    subscriptionCardAdapter.reload(newText.orEmpty())
-                    return false
-                }
-            })
-
-            searchView.setOnCloseListener {
-                mainViewModel.filterConfig("")
-                subscriptionCardAdapter.reload("")
-                false
-            }
+        // This screen always uses the dark cosmic toolbar, even when the phone
+        // is in light mode. AppCompat otherwise tints icons dark-on-dark.
+        listOf(R.id.add_config, R.id.import_clipboard).forEach { id ->
+            menu.findItem(id)?.icon?.mutate()?.setTint(Color.WHITE)
         }
         return super.onCreateOptionsMenu(menu)
     }
 
     override fun onOptionsItemSelected(item: MenuItem) = when (item.itemId) {
-        R.id.add_subscription_clipboard -> {
-            addSubscriptionFromClipboard()
+        R.id.import_clipboard -> {
+            importFromClipboard()
+            true
+        }
+
+        R.id.add_config -> {
+            showAddConfigMenu(item)
             true
         }
 
@@ -478,34 +789,96 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         else -> super.onOptionsItemSelected(item)
     }
 
-    private fun addSubscriptionFromClipboard() {
-        val clipboard = runCatching { Utils.getClipboard(this) }.getOrNull()
-            ?.trim()?.lineSequence()?.firstOrNull()?.trim()
-        if (!Utils.isValidSubUrl(clipboard)) {
-            toastError(R.string.subscription_empty_clipboard)
-            return
+    private fun showAddConfigMenu(item: MenuItem) {
+        val anchor = findViewById<View>(item.itemId) ?: binding.toolbar
+        androidx.appcompat.widget.PopupMenu(this, anchor).apply {
+            menu.add(0, 1, 0, R.string.menu_item_import_config_qrcode)
+            menu.add(0, 2, 1, R.string.menu_item_import_config_manual)
+            menu.add(0, 3, 2, R.string.menu_item_import_config_clipboard)
+            setOnMenuItemClickListener { menuItem ->
+                when (menuItem.itemId) {
+                    1 -> {
+                        importFromQrCode()
+                        true
+                    }
+                    2 -> {
+                        showManualImportDialog()
+                        true
+                    }
+                    3 -> {
+                        importFromClipboard()
+                        true
+                    }
+                    else -> false
+                }
+            }
+            show()
         }
-        if (MmkvManager.decodeSubscriptions().any { it.subscription.url == clipboard }) {
-            toast(R.string.subscription_already_exists)
-            return
-        }
+    }
 
+    private fun importFromQrCode() {
+        launchQRCodeScanner { scanResult ->
+            val text = scanResult?.trim().orEmpty()
+            if (text.isEmpty()) return@launchQRCodeScanner
+            importConfigText(text)
+        }
+    }
+
+    private fun showManualImportDialog() {
+        val padding = (20 * resources.displayMetrics.density).toInt()
+        val input = android.widget.EditText(this).apply {
+            minLines = 3
+            maxLines = 8
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            hint = getString(R.string.hint_add_config_manual)
+            setText(runCatching { Utils.getClipboard(this@MainActivity) }.getOrNull().orEmpty())
+            setPadding(padding, padding / 2, padding, padding / 2)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.title_add_config_manual)
+            .setView(input)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val text = input.text?.toString()?.trim().orEmpty()
+                if (text.isEmpty()) {
+                    toastError(R.string.toast_none_data)
+                } else {
+                    importConfigText(text)
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun importFromClipboard() {
+        val clipboard = runCatching { Utils.getClipboard(this) }.getOrNull()?.trim().orEmpty()
+        if (clipboard.isEmpty()) {
+            toastError(R.string.toast_none_data_clipboard)
+            return
+        }
+        importConfigText(clipboard)
+    }
+
+    private fun importConfigText(raw: String) {
         showLoading()
         lifecycleScope.launch(Dispatchers.IO) {
-            val subscription = runCatching { AngConfigManager.addSubscription(clipboard) }.getOrNull()
-            val result = subscription?.let { AngConfigManager.updateConfigViaSub(it) }
-            subscription?.let { SubscriptionUpdater.syncOne(subId = it.guid) }
+            val (count, countSub) = runCatching {
+                AngConfigManager.importBatchConfig(raw, "", false)
+            }.getOrElse { 0 to 0 }
             withContext(Dispatchers.Main) {
-                if (subscription == null) {
-                    toastError(R.string.toast_failure)
-                } else if (result != null && result.successCount > 0) {
-                    toast(getString(R.string.title_update_config_count, result.configCount))
+                hideLoading()
+                if (count + countSub > 0) {
+                    if (count > 0) {
+                        toast(getString(R.string.title_import_config_count, count))
+                    } else {
+                        toastSuccess(R.string.toast_success)
+                    }
+                    mainViewModel.reloadServerList()
+                    setupGroupTab()
+                    refreshSelectedProfile()
+                    updateConnectButtonAvailability()
                 } else {
                     toastError(R.string.toast_failure)
                 }
-                mainViewModel.reloadServerList()
-                setupGroupTab()
-                hideLoading()
             }
         }
     }
@@ -533,7 +906,7 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         MmkvManager.setSelectServer(guid)
         refreshSelectedProfile()
         updateConnectButtonAvailability()
-        subscriptionCardAdapter.reload()
+        subscriptionCardAdapter.notifyProfileStatusChanged(guid)
         if (mainViewModel.isRunning.value == true) reloadV2Ray()
     }
 

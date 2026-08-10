@@ -21,21 +21,24 @@ import com.v2ray.ang.dto.entities.SubscriptionCache
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.matchesPattern
 import com.v2ray.ang.extension.toastError
-import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.GeoAssetUpdater
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
+import com.v2ray.ang.util.FailureLogRecorder
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Collections
 import java.util.regex.PatternSyntaxException
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+    @Volatile
+    private var receivedServiceState = false
     private var serverList = mutableListOf<String>() // MmkvManager.decodeServerList()
     var subscriptionId: String = MmkvManager.decodeSettingsString(AppConfig.CACHE_SUBSCRIPTION_ID, "").orEmpty()
     var keywordFilter = ""
@@ -43,6 +46,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isRunning by lazy { MutableLiveData<Boolean>() }
     val updateListAction by lazy { MutableLiveData<Int>() }
     val updateTestResultAction by lazy { MutableLiveData<String>() }
+    val profileDelayUpdatedAction by lazy { MutableLiveData<String>() }
     val geoDataRepairAction by lazy { MutableLiveData<String>() }
     val geoAssetsReadyAction by lazy { MutableLiveData<Boolean>() }
 
@@ -51,10 +55,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * `registerReceiver(Context, BroadcastReceiver, IntentFilter, int)`.
      */
     fun startListenBroadcast() {
+        receivedServiceState = false
         isRunning.value = false
         val mFilter = IntentFilter(AppConfig.BROADCAST_ACTION_ACTIVITY)
         ContextCompat.registerReceiver(getApplication(), mMsgReceiver, mFilter, Utils.receiverFlags())
         MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_REGISTER_CLIENT, "")
+        viewModelScope.launch {
+            repeat(2) {
+                delay(750L)
+                if (receivedServiceState) return@launch
+                LogUtil.w(AppConfig.TAG, "VPN service state reply timed out; retrying registration")
+                MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_REGISTER_CLIENT, "")
+            }
+        }
+    }
+
+    /** Reconcile UI after Activity recreation/resume; the daemon is authoritative. */
+    fun requestServiceState() {
+        receivedServiceState = false
+        MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_REGISTER_CLIENT, "")
+        viewModelScope.launch {
+            delay(1600L)
+            if (receivedServiceState) return@launch
+            // Daemon process died (e.g. native hev abort) without sending STOP —
+            // otherwise the UI stays "connected" and refuses a clean toggle.
+            if (isRunning.value == true) {
+                LogUtil.w(AppConfig.TAG, "VPN daemon did not reply; clearing stuck running UI state")
+                FailureLogRecorder.recordFailure("daemon_unreachable")
+                isRunning.value = false
+            }
+        }
     }
 
     /**
@@ -198,6 +228,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
         }
+    }
+
+    /** Measure real delay for every profile in one subscription. */
+    fun testSubscriptionRealPing(subscriptionId: String) {
+        val guids = MmkvManager.decodeServerList(subscriptionId)
+        if (guids.isEmpty()) return
+        MessageUtil.sendMsg2TestService(
+            getApplication(),
+            TestServiceMessage(key = AppConfig.MSG_MEASURE_CONFIG_CANCEL)
+        )
+        MmkvManager.clearAllTestDelayResults(guids)
+        updateListAction.value = -1
+        MessageUtil.sendMsg2TestService(
+            getApplication(),
+            TestServiceMessage(
+                key = AppConfig.MSG_MEASURE_CONFIG_START,
+                subscriptionId = subscriptionId,
+            )
+        )
     }
 
     /**
@@ -432,19 +481,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         override fun onReceive(ctx: Context?, intent: Intent?) {
             when (intent?.getIntExtra("key", 0)) {
                 AppConfig.MSG_STATE_RUNNING -> {
+                    receivedServiceState = true
                     isRunning.value = true
                 }
 
                 AppConfig.MSG_STATE_NOT_RUNNING -> {
+                    receivedServiceState = true
                     isRunning.value = false
                 }
 
                 AppConfig.MSG_STATE_START_SUCCESS -> {
-                    getApplication<AngApplication>().toastSuccess(R.string.toast_services_success)
+                    receivedServiceState = true
                     isRunning.value = true
                 }
 
                 AppConfig.MSG_STATE_START_FAILURE -> {
+                    receivedServiceState = true
                     val errorMessage = intent.getStringExtra("content")
                     if (GeoAssetUpdater.isGeoDataError(errorMessage)) {
                         geoDataRepairAction.value = errorMessage.orEmpty()
@@ -457,6 +509,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 AppConfig.MSG_STATE_STOP_SUCCESS -> {
+                    receivedServiceState = true
                     isRunning.value = false
                 }
 
@@ -467,6 +520,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 AppConfig.MSG_MEASURE_CONFIG_SUCCESS -> {
                     val content = intent.getStringExtra("content")
                     updateListAction.value = getPosition(content ?: "")
+                    // Also push a sentinel so MainActivity can do a lightweight card refresh.
+                    profileDelayUpdatedAction.value = content.orEmpty()
                 }
 
                 AppConfig.MSG_MEASURE_CONFIG_NOTIFY -> {

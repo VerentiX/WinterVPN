@@ -9,58 +9,37 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Build
+import android.os.SystemClock
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.dto.entities.ProfileItem
-import com.v2ray.ang.extension.toSpeedString
 import com.v2ray.ang.ui.MainActivity
-import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.AppBatteryUsageEstimator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.math.min
 
 object NotificationManager {
     private const val NOTIFICATION_ID = 1
     private const val NOTIFICATION_PENDING_INTENT_CONTENT = 0
     private const val NOTIFICATION_PENDING_INTENT_STOP_V2RAY = 1
     private const val NOTIFICATION_PENDING_INTENT_RESTART_V2RAY = 2
-    private const val NOTIFICATION_ICON_THRESHOLD = 3000
-    private const val QUERY_INTERVAL_MS = 3000L
-    private const val IDLE_QUERY_INTERVAL_MS = 15000L
+    private const val BATTERY_QUERY_INTERVAL_MS = 15 * 60_000L
+    private const val BATTERY_INITIAL_QUERY_DELAY_MS = 60_000L
 
-    private var lastQueryTime = 0L
     private var mBuilder: NotificationCompat.Builder? = null
-    private var speedNotificationJob: Job? = null
     private var mNotificationManager: NotificationManager? = null
-
-    /**
-     * Starts the speed notification.
-     * @param currentConfig The current profile configuration.
-     */
-    fun startSpeedNotification() {
-        val showSpeed = MmkvManager.decodeSettingsBool(AppConfig.PREF_SPEED_ENABLED) == true
-        val showActiveRoute = MmkvManager.decodeSettingsBool(
-            AppConfig.PREF_NOTIFICATION_SHOW_ACTIVE_OUTBOUND
-        ) == true
-        if (!showSpeed && !showActiveRoute) return
-        if (speedNotificationJob != null || CoreServiceManager.isRunning() == false) return
-
-        var lastZeroSpeed = false
-
-        speedNotificationJob = CoroutineScope(Dispatchers.IO).launch {
-            while (isActive) {
-                lastZeroSpeed = updateSpeedNotificationOnce(lastZeroSpeed)
-                delay(if (lastZeroSpeed) IDLE_QUERY_INTERVAL_MS else QUERY_INTERVAL_MS)
-            }
-        }
-    }
+    private var batteryUsageJob: Job? = null
+    @Volatile private var batteryUsageMah: Double? = null
+    @Volatile private var batteryFullCapacityMah: Double? = null
+    @Volatile private var batteryUsageStartedAt = 0L
+    @Volatile private var batteryStatsAvailable: Boolean? = null
 
     /**
      * Shows the notification.
@@ -68,9 +47,6 @@ object NotificationManager {
      */
     fun showNotification(currentConfig: ProfileItem?) {
         val service = getService() ?: return
-
-        // Reset last query time to avoid querying stats too soon after showing the notification
-        lastQueryTime = System.currentTimeMillis()
 
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
 
@@ -91,8 +67,6 @@ object NotificationManager {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 createNotificationChannel()
             } else {
-                // If earlier version channel ID is not used
-                // https://developer.android.com/reference/android/support/v4/app/NotificationCompat.Builder.html#NotificationCompat.Builder(android.content.Context)
                 ""
             }
 
@@ -124,33 +98,19 @@ object NotificationManager {
                 restartV2RayPendingIntent
             )
 
-        //mBuilder?.setDefaults(NotificationCompat.FLAG_ONLY_ALERT_ONCE)
-
         service.startForeground(NOTIFICATION_ID, mBuilder?.build())
+        updateBatteryUsageTracking()
     }
 
     /**
      * Cancels the notification.
      */
     fun cancelNotification() {
-        val service = getService() ?: return
-        service.stopForeground(Service.STOP_FOREGROUND_REMOVE)
-
+        val service = getService()
+        service?.stopForeground(Service.STOP_FOREGROUND_REMOVE)
         mBuilder = null
-        speedNotificationJob?.cancel()
-        speedNotificationJob = null
+        stopBatteryUsageTracking()
         mNotificationManager = null
-    }
-
-    /**
-     * Stops the speed notification.
-     */
-    fun stopSpeedNotification() {
-        speedNotificationJob?.let {
-            it.cancel()
-            speedNotificationJob = null
-            updateNotification("", 0, 0)
-        }
     }
 
     /**
@@ -181,27 +141,6 @@ object NotificationManager {
         return channelId
     }
 
-    /**
-     * Updates the notification with the given content text and traffic data.
-     * @param contentText The content text.
-     * @param proxyTraffic The proxy traffic.
-     * @param directTraffic The direct traffic.
-     */
-    private fun updateNotification(contentText: String?, proxyTraffic: Long, directTraffic: Long) {
-        if (mBuilder != null) {
-            if (proxyTraffic < NOTIFICATION_ICON_THRESHOLD && directTraffic < NOTIFICATION_ICON_THRESHOLD) {
-                mBuilder?.setSmallIcon(R.drawable.ic_stat_name)
-            } else if (proxyTraffic > directTraffic) {
-                mBuilder?.setSmallIcon(R.drawable.ic_stat_proxy)
-            } else {
-                mBuilder?.setSmallIcon(R.drawable.ic_stat_direct)
-            }
-            mBuilder?.setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
-            mBuilder?.setContentText(contentText)
-            getNotificationManager()?.notify(NOTIFICATION_ID, mBuilder?.build())
-        }
-    }
-
     /** Refreshes route/MTU details immediately after Xray accepts a new flow. */
     fun refreshConnectionDetails() {
         val builder = mBuilder ?: return
@@ -211,14 +150,99 @@ object NotificationManager {
         getNotificationManager()?.notify(NOTIFICATION_ID, builder.build())
     }
 
+    /** Apply the opt-in energy counter immediately without restarting the VPN. */
+    fun updateBatteryUsageTracking() {
+        val enabled = MmkvManager.decodeSettingsBool(
+            AppConfig.PREF_NOTIFICATION_SHOW_BATTERY_USAGE,
+            false,
+        )
+        if (!enabled) {
+            stopBatteryUsageTracking()
+            refreshConnectionDetails()
+            return
+        }
+        if (batteryUsageJob?.isActive == true) {
+            refreshConnectionDetails()
+            return
+        }
+        val service = getService() ?: return
+        batteryUsageJob = CoroutineScope(Dispatchers.IO).launch {
+            val baseline = AppBatteryUsageEstimator.readSnapshot(service)
+            batteryStatsAvailable = baseline != null
+            batteryFullCapacityMah = AppBatteryUsageEstimator.estimateFullCapacityMah(service)
+            batteryUsageStartedAt = SystemClock.elapsedRealtime()
+            batteryUsageMah = 0.0
+            refreshConnectionDetails()
+            if (baseline == null) return@launch
+            var nextDelayMs = BATTERY_INITIAL_QUERY_DELAY_MS
+            while (isActive) {
+                delay(nextDelayMs)
+                nextDelayMs = BATTERY_QUERY_INTERVAL_MS
+                val current = AppBatteryUsageEstimator.readSnapshot(service)
+                val estimate = current?.let { AppBatteryUsageEstimator.estimateDeltaMah(baseline, it) }
+                if (estimate == null) {
+                    batteryStatsAvailable = false
+                    batteryUsageMah = null
+                } else {
+                    batteryStatsAvailable = true
+                    batteryUsageMah = estimate
+                }
+                refreshConnectionDetails()
+            }
+        }
+    }
+
+    private fun stopBatteryUsageTracking() {
+        batteryUsageJob?.cancel()
+        batteryUsageJob = null
+        batteryUsageMah = null
+        batteryFullCapacityMah = null
+        batteryUsageStartedAt = 0L
+        batteryStatsAvailable = null
+    }
+
+    private fun batteryUsageText(): String? {
+        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_NOTIFICATION_SHOW_BATTERY_USAGE) != true) {
+            return null
+        }
+        val service = getService() ?: return null
+        val usedMah = batteryUsageMah
+        return when {
+            batteryStatsAvailable == false -> service.getString(
+                R.string.notification_battery_usage_unavailable
+            )
+            usedMah == null -> service.getString(R.string.notification_battery_usage_waiting)
+            batteryFullCapacityMah != null -> {
+                val percent = usedMah / batteryFullCapacityMah!! * 100.0
+                val hours = (SystemClock.elapsedRealtime() - batteryUsageStartedAt) / 3_600_000.0
+                val rate = if (hours > 0.0) percent / hours else 0.0
+                service.getString(R.string.notification_battery_usage, percent, usedMah, rate)
+            }
+            else -> service.getString(R.string.notification_battery_usage_mah, usedMah)
+        }
+    }
+
     private fun connectionDetails(): String {
-        val parts = ArrayList<String>(2)
+        val parts = ArrayList<String>(4)
+        batteryUsageText()?.let(parts::add)
         if (MmkvManager.decodeSettingsBool(AppConfig.PREF_NOTIFICATION_SHOW_MTU) == true) {
             parts.add("MTU ${SettingsManager.getEffectiveVpnMtu()}")
         }
         if (MmkvManager.decodeSettingsBool(AppConfig.PREF_NOTIFICATION_SHOW_ACTIVE_OUTBOUND) == true) {
             val route = CoreServiceManager.getActiveOutboundLabel()
             parts.add(if (route.isBlank()) "Маршрут: ожидание трафика" else "Маршрут: $route")
+        }
+        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_NOTIFICATION_SHOW_ROUTING_MODE) == true) {
+            val service = getService()
+            val mode = CoreServiceManager.getActiveRoutingModeLabel()
+            if (service != null && mode.isNotBlank()) {
+                val label = when (mode) {
+                    "whitelist" -> service.getString(R.string.notification_routing_mode_whitelist)
+                    "default" -> service.getString(R.string.notification_routing_mode_default)
+                    else -> mode
+                }
+                parts.add(service.getString(R.string.notification_routing_mode, label))
+            }
         }
         return parts.joinToString(" · ")
     }
@@ -236,94 +260,10 @@ object NotificationManager {
     }
 
     /**
-     * Appends the speed string to the given text.
-     * @param text The text to append to.
-     * @param name The name of the tag.
-     * @param up The uplink speed.
-     * @param down The downlink speed.
-     */
-    private fun appendSpeedString(text: StringBuilder, name: String?, up: Double, down: Double) {
-        var n = name ?: "no tag"
-        n = n.take(min(n.length, 6))
-        text.append(n)
-        for (i in n.length..6 step 2) {
-            text.append("\t")
-        }
-        text.append("•  ${up.toLong().toSpeedString()}↑  ${down.toLong().toSpeedString()}↓\n")
-    }
-
-    /**
-     * Updates the speed notification once.
-     * Queries traffic stats, separates proxy and direct, and updates the notification.
-     * @param lastZeroSpeed The previous zero speed state.
-     * @return The current zero speed state.
-     */
-    private fun updateSpeedNotificationOnce(lastZeroSpeed: Boolean): Boolean {
-        val queryTime = System.currentTimeMillis()
-        val sinceLastQueryIn = (queryTime - lastQueryTime)
-
-        // If the query interval is too short, skip this round to avoid excessive CPU usage
-        if (sinceLastQueryIn < QUERY_INTERVAL_MS) {
-            LogUtil.w(AppConfig.TAG, "Query interval too short: ${sinceLastQueryIn}ms, skipping")
-            lastQueryTime = queryTime
-            return lastZeroSpeed
-        }
-        val sinceLastQueryInSeconds = sinceLastQueryIn / 1000.0
-
-        var proxyUplink = 0L
-        var proxyDownlink = 0L
-        var directUplink = 0L
-        var directDownlink = 0L
-
-        val outboundStats = CoreServiceManager.queryAllOutboundTrafficStats()
-        outboundStats.forEach { stat ->
-            when {
-                stat.tag == AppConfig.TAG_DIRECT -> {
-                    when (stat.direction) {
-                        AppConfig.UPLINK -> directUplink += stat.value
-                        AppConfig.DOWNLINK -> directDownlink += stat.value
-                    }
-                }
-
-                stat.tag.startsWith("route-") || stat.tag == AppConfig.TAG_PROXY -> {
-                    when (stat.direction) {
-                        AppConfig.UPLINK -> proxyUplink += stat.value
-                        AppConfig.DOWNLINK -> proxyDownlink += stat.value
-                    }
-                }
-            }
-        }
-
-        val proxyTotal = proxyUplink + proxyDownlink
-        val directTotal = directUplink + directDownlink
-        val zeroSpeed = proxyTotal + directTotal == 0L
-        val showSpeed = MmkvManager.decodeSettingsBool(AppConfig.PREF_SPEED_ENABLED) == true
-        if (!zeroSpeed || !lastZeroSpeed) {
-            val text = StringBuilder(connectionDetails())
-            if (showSpeed) {
-                if (text.isNotEmpty()) text.append('\n')
-                appendSpeedString(
-                    text, AppConfig.TAG_PROXY,
-                    proxyUplink / sinceLastQueryInSeconds,
-                    proxyDownlink / sinceLastQueryInSeconds
-                )
-                appendSpeedString(
-                    text, AppConfig.TAG_DIRECT,
-                    directUplink / sinceLastQueryInSeconds,
-                    directDownlink / sinceLastQueryInSeconds
-                )
-            }
-            updateNotification(text.toString(), proxyTotal, directTotal)
-        }
-        lastQueryTime = queryTime
-        return zeroSpeed
-    }
-
-    /**
      * Gets the service instance.
      * @return The service instance.
      */
     private fun getService(): Service? {
-        return CoreServiceManager.serviceControl?.get()?.getService()
+        return CoreServiceManager.serviceControl?.getService()
     }
 }

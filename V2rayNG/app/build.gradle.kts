@@ -22,8 +22,8 @@ android {
         targetSdk = 37
         // 10000 = 1.0.0. Keep increasing this value for every published APK.
         // It is intentionally above the old v2rayNG code so Android accepts the rebrand as an update.
-        versionCode = 10103
-        versionName = "1.1.3"
+        versionCode = 10203
+        versionName = "1.2.3"
         multiDexEnabled = true
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
@@ -102,7 +102,7 @@ android {
                 .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
                 .forEach { output ->
                     val abi = output.getFilter("ABI") ?: "universal"
-                    output.outputFileName = "ЗимаVPN_${variant.versionName}-fdroid_${abi}.apk"
+                    output.outputFileName = "Winter_${variant.versionName}-fdroid_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (100 * variant.versionCode + versionCodes[abi]!!).plus(5000000)
@@ -122,7 +122,7 @@ android {
                     else
                         "universal"
 
-                    output.outputFileName = "ЗимаVPN_${variant.versionName}_${abi}.apk"
+                    output.outputFileName = "Winter_${variant.versionName}_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (1000000 * versionCodes[abi]!!).plus(variant.versionCode)

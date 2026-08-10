@@ -7,6 +7,8 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AngApplication
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreConfigManager
+import com.v2ray.ang.core.CoreServiceManager
+import com.v2ray.ang.core.WinterRoutingProfiles
 import com.v2ray.ang.dto.SubscriptionUpdateResult
 import com.v2ray.ang.dto.UrlContentRequest
 import com.v2ray.ang.dto.entities.ProfileItem
@@ -554,9 +556,9 @@ object AngConfigManager {
             val proxyUsername = SettingsManager.getSocksUsername()
             val proxyPassword = SettingsManager.getSocksPassword()
 
-            var configText = try {
+            var response = try {
                 val httpPort = SettingsManager.getHttpPort()
-                HttpUtil.getUrlContentWithUserAgent(
+                HttpUtil.getUrlContentResponseWithUserAgent(
                     UrlContentRequest(
                         url = url,
                         userAgent = userAgent,
@@ -568,11 +570,11 @@ object AngConfigManager {
                 )
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.ANG_PACKAGE, "Update subscription: proxy not ready or other error", e)
-                ""
+                null
             }
-            if (configText.isEmpty()) {
-                configText = try {
-                    HttpUtil.getUrlContentWithUserAgent(
+            if (response?.content.isNullOrEmpty()) {
+                response = try {
+                    HttpUtil.getUrlContentResponseWithUserAgent(
                         UrlContentRequest(
                             url = url,
                             userAgent = userAgent
@@ -580,15 +582,17 @@ object AngConfigManager {
                     )
                 } catch (e: Exception) {
                     LogUtil.e(AppConfig.TAG, "Update subscription: Failed to get URL content with user agent", e)
-                    ""
+                    null
                 }
             }
+            val configText = response?.content.orEmpty()
             if (configText.isEmpty()) {
                 return SubscriptionUpdateResult(failureCount = 1)
             }
 
             val count = parseConfigViaSub(configText, it.guid, false)
             if (count > 0) {
+                applySubscriptionMetadata(it.subscription, response?.headers.orEmpty())
                 it.subscription.lastUpdated = System.currentTimeMillis()
                 MmkvManager.encodeSubscription(it.guid, it.subscription)
                 LogUtil.i(AppConfig.TAG, "Subscription updated: ${it.subscription.remarks}, $count configs")
@@ -633,6 +637,58 @@ object AngConfigManager {
      */
     private fun importUrlAsSubscription(url: String): Int {
         return if (addSubscription(url) != null) 1 else 0
+    }
+
+    private fun applySubscriptionMetadata(
+        subscription: com.v2ray.ang.dto.entities.SubscriptionItem,
+        headers: Map<String, String>,
+    ) {
+        fun header(name: String) = headers.entries
+            .firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+
+        header("subscription-userinfo")?.split(';')?.forEach { part ->
+            val pair = part.trim().split('=', limit = 2)
+            if (pair.size != 2) return@forEach
+            val value = pair[1].trim().toLongOrNull() ?: return@forEach
+            when (pair[0].trim().lowercase()) {
+                "upload" -> subscription.uploadBytes = value
+                "download" -> subscription.downloadBytes = value
+                "total" -> subscription.totalBytes = value
+                "expire" -> subscription.expireAt = value
+            }
+        }
+        val rawTitle = header("profile-title") ?: header("profile_title")
+        if (!rawTitle.isNullOrBlank()) {
+            subscription.profileTitle = decodeProfileTitle(rawTitle)
+        }
+
+        val routingHeader = header("profile-routing")
+            ?: header("Profile-Routing")
+            ?: header("x-winter-routing")
+        if (!routingHeader.isNullOrBlank()) {
+            val updated = WinterRoutingProfiles.saveFromHeader(routingHeader)
+            if (updated && CoreServiceManager.isRunning()) {
+                // Soft-reload so Smart Priority picks up the new default/whitelist rules.
+                runCatching {
+                    CoreServiceManager.reloadPriorityRoute()
+                }.onFailure {
+                    LogUtil.w(AppConfig.TAG, "Failed to reload after Winter routing update", it)
+                }
+            }
+        }
+    }
+
+    private fun decodeProfileTitle(value: String): String {
+        val trimmed = value.trim().removeSurrounding("\"")
+        return if (trimmed.startsWith("base64:", ignoreCase = true)) {
+            runCatching {
+                String(android.util.Base64.decode(trimmed.substringAfter(':'), android.util.Base64.DEFAULT))
+            }.getOrDefault(trimmed)
+        } else {
+            runCatching {
+                java.net.URLDecoder.decode(trimmed, Charsets.UTF_8.name())
+            }.getOrDefault(trimmed)
+        }
     }
 
     /** Adds exactly one subscription URL and returns it without importing arbitrary profile text. */

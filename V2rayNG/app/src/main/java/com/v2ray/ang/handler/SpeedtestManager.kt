@@ -49,23 +49,48 @@ object SpeedtestManager {
     }
 
     fun getRemoteIPInfo(): String? {
-        val url = MmkvManager.decodeSettingsString(AppConfig.PREF_IP_API_URL)
-            .takeIf { !it.isNullOrBlank() } ?: AppConfig.IP_API_URL
-
         val proxyUsername = SettingsManager.getSocksUsername()
         val proxyPassword = SettingsManager.getSocksPassword()
         val httpPort = SettingsManager.getHttpPort()
         if (httpPort == 0) return null
+
+        val preferred = MmkvManager.decodeSettingsString(AppConfig.PREF_IP_API_URL)
+            .takeIf { !it.isNullOrBlank() } ?: AppConfig.IP_API_URL
+        val urls = linkedSetOf(preferred).apply {
+            add(AppConfig.IP_API_URL)
+            addAll(AppConfig.IP_API_URL_FALLBACKS)
+        }
+
+        for (url in urls) {
+            formatIpInfo(fetchIpApi(url, httpPort, proxyUsername, proxyPassword))?.let { return it }
+        }
+        return null
+    }
+
+    private fun fetchIpApi(
+        url: String,
+        httpPort: Int,
+        proxyUsername: String?,
+        proxyPassword: String?
+    ): IPAPIInfo? {
         val content = HttpUtil.getUrlContent(
             UrlContentRequest(
                 url = url,
-                timeout = 5000,
+                timeout = 8000,
                 httpPort = httpPort,
                 proxyUsername = proxyUsername,
                 proxyPassword = proxyPassword
             )
         ) ?: return null
-        val ipInfo = JsonUtil.fromJsonSafe(content, IPAPIInfo::class.java) ?: return null
+        return JsonUtil.fromJsonSafe(content, IPAPIInfo::class.java).also {
+            if (it == null) {
+                LogUtil.w(AppConfig.TAG, "IP API parse failed for $url")
+            }
+        }
+    }
+
+    private fun formatIpInfo(ipInfo: IPAPIInfo?): String? {
+        if (ipInfo == null) return null
 
         val ip = listOf(
             ipInfo.ip,
@@ -74,13 +99,31 @@ object SpeedtestManager {
             ipInfo.query
         ).firstOrNull { !it.isNullOrBlank() }
 
-        val country = listOf(
+        val countryCode = listOf(
             ipInfo.country_code,
-            ipInfo.country,
             ipInfo.countryCode,
+            ipInfo.country_iso,
             ipInfo.location?.country_code
+        ).firstOrNull { !it.isNullOrBlank() && it.length <= 3 }
+
+        val countryName = listOf(
+            ipInfo.country_name,
+            ipInfo.country?.takeIf { it.length > 3 }
         ).firstOrNull { !it.isNullOrBlank() }
 
-        return "(${country ?: "unknown"}) ${ip ?: "unknown"}"
+        val country = when {
+            !countryCode.isNullOrBlank() && !countryName.isNullOrBlank() -> "$countryName ($countryCode)"
+            !countryCode.isNullOrBlank() -> countryCode
+            !countryName.isNullOrBlank() -> countryName
+            !ipInfo.country.isNullOrBlank() -> ipInfo.country
+            else -> null
+        }
+
+        return when {
+            !country.isNullOrBlank() && !ip.isNullOrBlank() -> "$ip\n$country"
+            !ip.isNullOrBlank() -> ip
+            !country.isNullOrBlank() -> country
+            else -> null
+        }
     }
 }

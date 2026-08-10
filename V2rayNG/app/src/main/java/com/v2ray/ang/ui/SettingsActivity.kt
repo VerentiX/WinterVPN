@@ -1,5 +1,9 @@
 package com.v2ray.ang.ui
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.view.View
 import androidx.lifecycle.lifecycleScope
@@ -13,13 +17,24 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.VPN
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreServiceManager
+import com.v2ray.ang.core.PriorityFailoverManager
 import com.v2ray.ang.extension.toastError
+import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.NotificationManager
+import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.helper.MmkvPreferenceDataStore
 import com.v2ray.ang.root.RootManager
 import com.v2ray.ang.core.ConnectionJournal
+import com.v2ray.ang.util.FailureLogRecorder
+import com.v2ray.ang.util.MtuPathProbe
 import com.v2ray.ang.util.Utils
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.content.ClipData
+import android.content.Intent
+import androidx.core.content.FileProvider
 
 class SettingsActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -38,6 +53,13 @@ class SettingsActivity : BaseActivity() {
         private val vpnBypassLan by lazy { findPreference<ListPreference>(AppConfig.PREF_VPN_BYPASS_LAN) }
         private val vpnInterfaceAddress by lazy { findPreference<ListPreference>(AppConfig.PREF_VPN_INTERFACE_ADDRESS_CONFIG_INDEX) }
         private val vpnMtu by lazy { findPreference<EditTextPreference>(AppConfig.PREF_VPN_MTU) }
+        private val customMtu by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_CUSTOM_MTU_ENABLED) }
+        private val adaptiveMtu by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_ADAPTIVE_MTU_ENABLED) }
+        private val probeMtuWifi by lazy { findPreference<Preference>(AppConfig.PREF_PROBE_MTU_WIFI) }
+        private val probeMtuCellular by lazy { findPreference<Preference>(AppConfig.PREF_PROBE_MTU_CELLULAR) }
+
+        private var networkCallback: ConnectivityManager.NetworkCallback? = null
+        private var lastKnownMtuTransport: MtuPathProbe.Transport? = null
 
         private val mux by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_MUX_ENABLED) }
         private val muxConcurrency by lazy { findPreference<EditTextPreference>(AppConfig.PREF_MUX_CONCURRENCY) }
@@ -56,7 +78,7 @@ class SettingsActivity : BaseActivity() {
 
         private val hevTunLogLevel by lazy { findPreference<ListPreference>(AppConfig.PREF_HEV_TUNNEL_LOGLEVEL) }
         private val hevTunRwTimeout by lazy { findPreference<EditTextPreference>(AppConfig.PREF_HEV_TUNNEL_RW_TIMEOUT) }
-        private val useHevTun by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_USE_HEV_TUNNEL) }
+        private val resetSettings by lazy { findPreference<Preference>(AppConfig.PREF_RESET_SETTINGS) }
 
         private val enableLocalProxy by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_ENABLE_LOCAL_PROXY) }
         private val socksPort by lazy { findPreference<EditTextPreference>(AppConfig.PREF_SOCKS_PORT) }
@@ -67,6 +89,17 @@ class SettingsActivity : BaseActivity() {
         private val proxySharing by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_PROXY_SHARING) }
         private val connectionDiagnostics by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_CONNECTION_DIAGNOSTICS_ENABLED) }
         private val connectionJournal by lazy { findPreference<Preference>(AppConfig.PREF_CONNECTION_JOURNAL) }
+        private val failureLogEnabled by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_FAILURE_LOG_ENABLED) }
+        private val failureLogView by lazy { findPreference<Preference>(AppConfig.PREF_FAILURE_LOG_VIEW) }
+        private val priorityProbeIntervals by lazy {
+            findPreference<Preference>(AppConfig.PREF_PRIORITY_PROBE_INTERVALS)
+        }
+        private val showBatteryUsage by lazy {
+            findPreference<CheckBoxPreference>(AppConfig.PREF_NOTIFICATION_SHOW_BATTERY_USAGE)
+        }
+        private val showRoutingMode by lazy {
+            findPreference<CheckBoxPreference>(AppConfig.PREF_NOTIFICATION_SHOW_ROUTING_MODE)
+        }
 
         override fun onCreatePreferences(bundle: Bundle?, s: String?) {
             // Use MMKV as the storage backend for all Preferences
@@ -76,6 +109,29 @@ class SettingsActivity : BaseActivity() {
             addPreferencesFromResource(R.xml.pref_settings)
 
             initPreferenceSummaries()
+            updatePriorityProbeIntervalsSummary()
+            priorityProbeIntervals?.setOnPreferenceClickListener {
+                showPriorityProbeIntervalsDialog()
+                true
+            }
+            showBatteryUsage?.setOnPreferenceChangeListener { _, _ ->
+                // Preference persists after this callback; post the daemon message
+                // so its MMKV read observes the new value.
+                requireActivity().window.decorView.post {
+                    com.v2ray.ang.util.MessageUtil.sendMsg2Service(
+                        requireContext(),
+                        AppConfig.MSG_BATTERY_STATS_SETTING_CHANGED,
+                        "",
+                    )
+                }
+                true
+            }
+            showRoutingMode?.setOnPreferenceChangeListener { _, _ ->
+                requireActivity().window.decorView.post {
+                    NotificationManager.refreshConnectionDetails()
+                }
+                true
+            }
 
             fun updateConnectionJournalAvailability(enabled: Boolean) {
                 connectionJournal?.isEnabled = enabled
@@ -103,6 +159,28 @@ class SettingsActivity : BaseActivity() {
                     .setNegativeButton("Закрыть", null)
                     .setPositiveButton("Очистить") { _, _ -> ConnectionJournal.clear() }
                     .show()
+                true
+            }
+
+            fun updateFailureLogAvailability(enabled: Boolean) {
+                failureLogView?.isEnabled = enabled
+                failureLogView?.summary = if (enabled) {
+                    getString(R.string.summary_pref_failure_log_view)
+                } else {
+                    "Сначала включите запись логов падений."
+                }
+            }
+            updateFailureLogAvailability(failureLogEnabled?.isChecked == true)
+            failureLogEnabled?.setOnPreferenceChangeListener { _, value ->
+                val enabled = value as Boolean
+                requireActivity().window.decorView.post {
+                    FailureLogRecorder.refreshEnabled()
+                    updateFailureLogAvailability(enabled)
+                }
+                true
+            }
+            failureLogView?.setOnPreferenceClickListener {
+                showFailureLogDialog()
                 true
             }
 
@@ -141,11 +219,68 @@ class SettingsActivity : BaseActivity() {
 
             mode?.dialogLayoutResource = R.layout.preference_with_help_link
 
-            useHevTun?.setOnPreferenceChangeListener { _, newValue ->
-                updateHevTunSettings(newValue as Boolean)
+            resetSettings?.setOnPreferenceClickListener {
+                AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.dialog_reset_settings_title)
+                    .setMessage(R.string.dialog_reset_settings_message)
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(R.string.title_pref_reset_settings) { _, _ ->
+                        SettingsManager.resetSettingsToDefaults(requireContext())
+                        parentFragmentManager.beginTransaction()
+                            .replace(R.id.fragment_settings, SettingsFragment())
+                            .commitAllowingStateLoss()
+                        requireContext().toastSuccess(R.string.toast_settings_reset)
+                        if (CoreServiceManager.isRunning()) {
+                            CoreServiceManager.reloadVService(requireContext())
+                        }
+                    }
+                    .show()
                 true
             }
 
+            adaptiveMtu?.setOnPreferenceChangeListener { _, newValue ->
+                val adaptiveEnabled = newValue as Boolean
+                if (!adaptiveEnabled && SettingsManager.isCustomMtuEnabled()) {
+                    SettingsManager.setRuntimeVpnMtu(null)
+                }
+                updateMtuSettingsUi(
+                    customEnabled = SettingsManager.isCustomMtuEnabled(),
+                    adaptiveEnabled = adaptiveEnabled,
+                )
+                requireActivity().window.decorView.post {
+                    if (CoreServiceManager.isRunning()) {
+                        CoreServiceManager.requestTunRecreate()
+                    }
+                }
+                true
+            }
+            customMtu?.setOnPreferenceChangeListener { _, newValue ->
+                val enabled = newValue as Boolean
+                if (enabled && !MmkvManager.decodeSettingsBool(AppConfig.PREF_ADAPTIVE_MTU_ENABLED, false)) {
+                    SettingsManager.setRuntimeVpnMtu(null)
+                }
+                updateMtuSettingsUi(
+                    customEnabled = enabled,
+                    adaptiveEnabled = MmkvManager.decodeSettingsBool(
+                        AppConfig.PREF_ADAPTIVE_MTU_ENABLED,
+                        false,
+                    ),
+                )
+                requireActivity().window.decorView.post {
+                    if (CoreServiceManager.isRunning()) {
+                        CoreServiceManager.requestTunRecreate()
+                    }
+                }
+                true
+            }
+            probeMtuWifi?.setOnPreferenceClickListener {
+                runMtuProbe(MtuPathProbe.Transport.WIFI)
+                true
+            }
+            probeMtuCellular?.setOnPreferenceClickListener {
+                runMtuProbe(MtuPathProbe.Transport.CELLULAR)
+                true
+            }
             enableLocalProxy?.setOnPreferenceChangeListener { _, newValue ->
                 updateEnableLocalProxy(newValue as Boolean)
                 true
@@ -230,6 +365,49 @@ class SettingsActivity : BaseActivity() {
             preferenceScreen?.let { traverse(it) }
         }
 
+        private fun updatePriorityProbeIntervalsSummary() {
+            val screenOn = SettingsManager.getPriorityProbeIntervalMs(screenOn = true) / 1_000L
+            val screenOff = SettingsManager.getPriorityProbeIntervalMs(screenOn = false) / 1_000L
+            priorityProbeIntervals?.summary = getString(
+                R.string.summary_pref_priority_probe_intervals_value,
+                screenOn,
+                screenOff,
+            )
+        }
+
+        private fun showPriorityProbeIntervalsDialog() {
+            val content = layoutInflater.inflate(R.layout.dialog_priority_probe_intervals, null)
+            val screenOn = content.findViewById<android.widget.EditText>(R.id.probe_interval_screen_on)
+            val screenOff = content.findViewById<android.widget.EditText>(R.id.probe_interval_screen_off)
+            screenOn.setText((SettingsManager.getPriorityProbeIntervalMs(true) / 1_000L).toString())
+            screenOff.setText((SettingsManager.getPriorityProbeIntervalMs(false) / 1_000L).toString())
+
+            val dialog = AlertDialog.Builder(requireContext())
+                .setTitle(R.string.title_pref_priority_probe_intervals)
+                .setView(content)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(android.R.string.ok, null)
+                .create()
+            dialog.setOnShowListener {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                    val onSeconds = screenOn.text?.toString()?.toLongOrNull()
+                    val offSeconds = screenOff.text?.toString()?.toLongOrNull()
+                    if (onSeconds == null || onSeconds !in 2L..86_400L ||
+                        offSeconds == null || offSeconds !in 10L..86_400L
+                    ) {
+                        requireContext().toastError(R.string.error_invalid_probe_intervals)
+                        return@setOnClickListener
+                    }
+                    MmkvManager.encodeSettings(AppConfig.PREF_PRIORITY_PROBE_SCREEN_ON_SECONDS, onSeconds)
+                    MmkvManager.encodeSettings(AppConfig.PREF_PRIORITY_PROBE_SCREEN_OFF_SECONDS, offSeconds)
+                    updatePriorityProbeIntervalsSummary()
+                    PriorityFailoverManager.onProbeIntervalsChanged()
+                    dialog.dismiss()
+                }
+            }
+            dialog.show()
+        }
+
         private suspend fun checkAndRequestRoot(): Boolean {
             val hasRoot = RootManager.refresh()
             if (!isAdded) return false
@@ -241,7 +419,8 @@ class SettingsActivity : BaseActivity() {
 
         override fun onStart() {
             super.onStart()
-            updateHevTunSettings(MmkvManager.decodeSettingsBool(AppConfig.PREF_USE_HEV_TUNNEL, true))
+            // Hev TUN is always forced on; keep local-proxy UI locked accordingly.
+            updateHevTunSettings(true)
 
             // Initialize mode-dependent UI states
             updateMode(MmkvManager.decodeSettingsString(AppConfig.PREF_MODE, VPN))
@@ -256,6 +435,163 @@ class SettingsActivity : BaseActivity() {
             updateFragment(MmkvManager.decodeSettingsBool(AppConfig.PREF_FRAGMENT_ENABLED, false))
 
             updateDynamicSocksPort(MmkvManager.decodeSettingsBool(AppConfig.PREF_DYNAMIC_SOCKS_PORT, false))
+
+            updateMtuSettingsUi(
+                customEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_CUSTOM_MTU_ENABLED, false),
+                adaptiveEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_ADAPTIVE_MTU_ENABLED, false),
+            )
+            registerMtuTransportWatcher()
+        }
+
+        override fun onStop() {
+            unregisterMtuTransportWatcher()
+            super.onStop()
+        }
+
+        private fun registerMtuTransportWatcher() {
+            unregisterMtuTransportWatcher()
+            val connectivity = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return
+            lastKnownMtuTransport = MtuPathProbe.detectActiveTransport(connectivity)
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) = refreshMtuTilesIfTransportChanged()
+                override fun onLost(network: Network) = refreshMtuTilesIfTransportChanged()
+                override fun onCapabilitiesChanged(
+                    network: Network,
+                    networkCapabilities: NetworkCapabilities,
+                ) = refreshMtuTilesIfTransportChanged()
+            }
+            networkCallback = callback
+            try {
+                connectivity.registerDefaultNetworkCallback(callback)
+            } catch (_: Exception) {
+                networkCallback = null
+            }
+        }
+
+        private fun unregisterMtuTransportWatcher() {
+            val callback = networkCallback ?: return
+            networkCallback = null
+            val connectivity = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return
+            try {
+                connectivity.unregisterNetworkCallback(callback)
+            } catch (_: Exception) {
+            }
+        }
+
+        private fun refreshMtuTilesIfTransportChanged() {
+            view?.post {
+                if (!isAdded) return@post
+                val connectivity = requireContext()
+                    .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                val active = MtuPathProbe.detectActiveTransport(connectivity)
+                if (active == lastKnownMtuTransport) return@post
+                lastKnownMtuTransport = active
+                updateMtuSettingsUi(
+                    customEnabled = SettingsManager.isCustomMtuEnabled(),
+                    adaptiveEnabled = MmkvManager.decodeSettingsBool(
+                        AppConfig.PREF_ADAPTIVE_MTU_ENABLED,
+                        false,
+                    ),
+                )
+            }
+        }
+
+        private fun updateMtuSettingsUi(customEnabled: Boolean, adaptiveEnabled: Boolean) {
+            val vpn = MmkvManager.decodeSettingsString(AppConfig.PREF_MODE, VPN) == VPN
+            customMtu?.isEnabled = vpn
+            vpnMtu?.isEnabled = vpn && customEnabled && !adaptiveEnabled
+            adaptiveMtu?.isEnabled = vpn && customEnabled
+
+            val connectivity = requireContext()
+                .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val active = MtuPathProbe.detectActiveTransport(connectivity)
+            lastKnownMtuTransport = active
+            val probesActive = vpn && customEnabled && adaptiveEnabled
+
+            updateProbeTile(
+                probeMtuWifi,
+                MtuPathProbe.Transport.WIFI,
+                probesActive && active == MtuPathProbe.Transport.WIFI,
+            )
+            updateProbeTile(
+                probeMtuCellular,
+                MtuPathProbe.Transport.CELLULAR,
+                probesActive && active == MtuPathProbe.Transport.CELLULAR,
+            )
+        }
+
+        private fun updateProbeTile(
+            pref: Preference?,
+            transport: MtuPathProbe.Transport,
+            clickable: Boolean,
+        ) {
+            if (pref == null) return
+            pref.isEnabled = clickable
+            val stored = SettingsManager.getAdaptiveMtuForTransport(transport)
+            pref.summary = when {
+                stored != null ->
+                    getString(R.string.summary_pref_probe_mtu_value, stored)
+                !clickable && SettingsManager.isAdaptiveMtuEnabled() ->
+                    getString(R.string.summary_pref_probe_mtu_wrong_transport)
+                else ->
+                    getString(R.string.summary_pref_probe_mtu_unset)
+            }
+        }
+
+        private fun runMtuProbe(transport: MtuPathProbe.Transport) {
+            val connectivity = requireContext()
+                .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            if (MtuPathProbe.detectActiveTransport(connectivity) != transport) {
+                requireContext().toastError(R.string.summary_pref_probe_mtu_wrong_transport)
+                updateMtuSettingsUi(
+                    customEnabled = SettingsManager.isCustomMtuEnabled(),
+                    adaptiveEnabled = SettingsManager.isAdaptiveMtuEnabled(),
+                )
+                return
+            }
+            val pref = when (transport) {
+                MtuPathProbe.Transport.WIFI -> probeMtuWifi
+                MtuPathProbe.Transport.CELLULAR -> probeMtuCellular
+            }
+            pref?.isEnabled = false
+            pref?.summary = getString(R.string.summary_pref_probe_mtu_running)
+
+            lifecycleScope.launch {
+                val upper = MtuPathProbe.linkMtuHint(connectivity)
+                val result = withContext(Dispatchers.IO) {
+                    val control = if (CoreServiceManager.isRunning()) {
+                        CoreServiceManager.serviceControl
+                    } else {
+                        null
+                    }
+                    MtuPathProbe.probeTunMtu(control, upper)
+                }
+                if (!isAdded) return@launch
+                if (result == null) {
+                    requireContext().toastError(R.string.toast_probe_mtu_failed)
+                    updateMtuSettingsUi(
+                        customEnabled = SettingsManager.isCustomMtuEnabled(),
+                        adaptiveEnabled = SettingsManager.isAdaptiveMtuEnabled(),
+                    )
+                    return@launch
+                }
+                SettingsManager.setAdaptiveMtuForTransport(transport, result)
+                if (SettingsManager.isAdaptiveMtuEnabled() &&
+                    MtuPathProbe.detectActiveTransport(connectivity) == transport
+                ) {
+                    val changed = SettingsManager.setRuntimeVpnMtu(result)
+                    if (changed && CoreServiceManager.isRunning()) {
+                        CoreServiceManager.requestTunRecreate()
+                    }
+                }
+                requireContext().toastSuccess(getString(R.string.toast_probe_mtu_success, result))
+                updateMtuSettingsUi(
+                    customEnabled = SettingsManager.isCustomMtuEnabled(),
+                    adaptiveEnabled = SettingsManager.isAdaptiveMtuEnabled(),
+                )
+            }
         }
 
         private fun updateMode(value: String?) {
@@ -267,9 +603,8 @@ class SettingsActivity : BaseActivity() {
             vpnDns?.isEnabled = vpn
             vpnBypassLan?.isEnabled = vpn
             vpnInterfaceAddress?.isEnabled = vpn
-            vpnMtu?.isEnabled = vpn
-            useHevTun?.isEnabled = vpn
-            updateHevTunSettings(false)
+            hevTunLogLevel?.isEnabled = vpn
+            hevTunRwTimeout?.isEnabled = vpn
             if (vpn) {
                 updateLocalDns(
                     MmkvManager.decodeSettingsBool(
@@ -277,13 +612,14 @@ class SettingsActivity : BaseActivity() {
                         false
                     )
                 )
-                updateHevTunSettings(
-                    MmkvManager.decodeSettingsBool(
-                        AppConfig.PREF_USE_HEV_TUNNEL,
-                        false
-                    )
-                )
+                updateHevTunSettings(true)
+            } else {
+                updateHevTunSettings(false)
             }
+            updateMtuSettingsUi(
+                customEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_CUSTOM_MTU_ENABLED, false),
+                adaptiveEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_ADAPTIVE_MTU_ENABLED, false),
+            )
         }
 
         private fun updateLocalDns(enabled: Boolean) {
@@ -364,6 +700,52 @@ class SettingsActivity : BaseActivity() {
                 enableLocalProxy?.isEnabled = true
             }
             updateEnableLocalProxy(enableLocalProxy?.isChecked == true)
+        }
+
+        private fun showFailureLogDialog() {
+            val ctx = requireContext()
+            AlertDialog.Builder(ctx)
+                .setTitle(R.string.title_pref_failure_log_view)
+                .setMessage(FailureLogRecorder.summary(ctx))
+                .setNegativeButton("Закрыть", null)
+                .setNeutralButton("Очистить") { _, _ ->
+                    FailureLogRecorder.clear(ctx)
+                    requireContext().toastSuccess("Логи падений очищены")
+                }
+                .setPositiveButton("Поделиться") { _, _ ->
+                    shareLatestFailureLog()
+                }
+                .show()
+        }
+
+        private fun shareLatestFailureLog() {
+            lifecycleScope.launch(Dispatchers.IO) {
+                val file = FailureLogRecorder.exportLatest(requireContext())
+                withContext(Dispatchers.Main) {
+                    if (file == null) {
+                        requireContext().toastError("Нет сохранённых логов падений")
+                        return@withContext
+                    }
+                    try {
+                        val uri = FileProvider.getUriForFile(
+                            requireContext(),
+                            "${requireContext().packageName}.cache",
+                            file,
+                        )
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            putExtra(Intent.EXTRA_SUBJECT, file.name)
+                            putExtra(Intent.EXTRA_TITLE, file.name)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            clipData = ClipData.newUri(requireContext().contentResolver, file.name, uri)
+                        }
+                        startActivity(Intent.createChooser(shareIntent, getString(R.string.title_pref_failure_log_view)))
+                    } catch (e: Exception) {
+                        requireContext().toastError(e.localizedMessage ?: e.toString())
+                    }
+                }
+            }
         }
     }
 

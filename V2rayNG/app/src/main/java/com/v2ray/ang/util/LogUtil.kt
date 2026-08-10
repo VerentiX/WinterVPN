@@ -53,6 +53,13 @@ object LogUtil {
     }
 
     private fun log(priority: Int, tag: String, message: String, throwable: Throwable? = null) {
+        if (priority >= Log.ERROR) {
+            FailureLogRecorder.breadcrumb(
+                if (throwable == null) "ERROR: $message" else "ERROR: $message (${throwable.javaClass.simpleName}: ${throwable.message})",
+                forceDisk = true,
+            )
+        }
+
         if (!isEnabled(priority)) return
 
         when {
@@ -74,7 +81,10 @@ object LogUtil {
      * Network/TUN lifecycle events remain visible even when normal core logging
      * is kept at the default "warning" level.
      */
-    fun transport(message: String) = Log.i(AppConfig.TAG, "TRANSPORT: $message")
+    fun transport(message: String) {
+        FailureLogRecorder.breadcrumb("TRANSPORT: $message")
+        Log.i(AppConfig.TAG, "TRANSPORT: $message")
+    }
 
     fun d(tag: String = AppConfig.TAG, message: String, throwable: Throwable) = log(Log.DEBUG, tag, message, throwable)
     fun i(tag: String = AppConfig.TAG, message: String, throwable: Throwable) = log(Log.INFO, tag, message, throwable)

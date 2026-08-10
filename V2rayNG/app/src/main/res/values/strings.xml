@@ -1,10 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Single branding source: change this value to rename the app everywhere. -->
-    <string name="app_name" translatable="false">ЗимаVPN</string>
+    <string name="app_name" translatable="false">Winter</string>
+    <string name="title_pref_priority_probe_intervals">Connection check intervals</string>
+    <string name="summary_pref_priority_probe_intervals_default">Screen on: 15 s; screen off: 300 s</string>
+    <string name="summary_pref_priority_probe_intervals_value">Screen on: %1$d s; screen off: %2$d s</string>
+    <string name="label_probe_interval_screen_on">Screen on (seconds, 2–86400)</string>
+    <string name="label_probe_interval_screen_off">Screen off (seconds, 10–86400)</string>
+    <string name="error_invalid_probe_intervals">Enter valid intervals within the indicated ranges</string>
     <string name="title_add_subscription_clipboard">Add subscription from clipboard</string>
+    <string name="title_add_config_manual">Enter config manually</string>
+    <string name="hint_add_config_manual">Paste vmess://, vless://, ss://, trojan:// or a subscription URL</string>
+    <string name="menu_item_import_config_manual">Enter manually</string>
     <string name="subscription_updated_at">Updated: %1$s · %2$d profiles</string>
     <string name="subscription_never_updated">Not updated yet · %1$d profiles</string>
+    <string name="subscription_traffic">Used %1$s of %2$s</string>
+    <string name="subscription_time_left">%1$d d %2$d h left</string>
+    <string name="subscription_expired">Subscription expired</string>
+    <string name="subscription_traffic_compact">%1$s / %2$s</string>
+    <string name="subscription_traffic_unlimited">%1$s / ∞</string>
+    <string name="subscription_expires_at">Until %1$s\n%2$d days left</string>
     <string name="subscription_auto_update_interval">Auto-update: %1$s</string>
     <string name="subscription_auto_update_off">Auto-update off</string>
     <string name="subscription_interval_hours">%1$d h</string>
@@ -19,8 +34,8 @@
     <string name="geo_update_failed">Could not update GeoIP/GeoSite. It will retry automatically.</string>
     <string name="vpn_notification_channel_name">%1$s connection</string>
     <string name="vpn_notification_title">%1$s · %2$s</string>
-    <string name="app_widget_name">ЗимаVPN</string>
-    <string name="app_tile_name">ЗимаVPN</string>
+    <string name="app_widget_name">Winter</string>
+    <string name="app_tile_name">Winter</string>
     <string name="app_tile_first_use">First use of this feature, please use the app to add server</string>
     <string name="navigation_drawer_open">Open navigation drawer</string>
     <string name="navigation_drawer_close">Close navigation drawer</string>
@@ -43,10 +58,12 @@
     <string name="title_server">Config</string>
     <string name="zeus_status_connecting">CONNECTING…</string>
     <string name="zeus_status_connected">PROTECTED</string>
-    <string name="zeus_status_disconnected">NOT CONNECTED</string>
+    <string name="zeus_status_disconnected">TAP TO CONNECT</string>
     <string name="zeus_profiles_title">Profiles</string>
     <string name="zeus_choose_profile">Choose a connection</string>
     <string name="zeus_no_profile">No profile selected</string>
+    <string name="connection_test_title">Connection check</string>
+    <string name="title_ui_animations">Animations</string>
     <string name="subscription_default_name">Subscription</string>
     <string name="local_profiles_name">Local profiles</string>
     <string name="subscription_profile_count">%1$d configurations — tap to expand</string>
@@ -189,6 +206,12 @@
     <string name="title_advanced">Advanced Settings</string>
     <string name="title_core_settings">Core Settings</string>
     <string name="title_vpn_settings">VPN Settings</string>
+    <string name="title_reset_settings">Reset</string>
+    <string name="title_pref_reset_settings">Reset settings to defaults</string>
+    <string name="summary_pref_reset_settings">Restore application settings to factory defaults. Subscriptions and profiles are kept.</string>
+    <string name="dialog_reset_settings_title">Reset settings?</string>
+    <string name="dialog_reset_settings_message">All application settings will be restored to defaults. Subscriptions and server profiles will not be deleted.</string>
+    <string name="toast_settings_reset">Settings restored to defaults</string>
     <string name="title_pref_per_app_proxy">Per-app proxy</string>
     <string name="summary_pref_per_app_proxy">General: Checked apps use proxy, unchecked apps connect directly; \nBypass mode: checked apps connect directly, unchecked apps use proxy. \nThe option to automatically select proxy applications is in the menu</string>
     <string name="title_pref_is_booted">Auto connect at startup</string>
@@ -241,12 +264,33 @@
     <string name="title_pref_vpn_interface_address">VPN Interface Address</string>
 
     <string name="title_pref_vpn_mtu">VPN MTU (default 1500)</string>
+    <string name="title_pref_custom_mtu">Configure MTU</string>
+    <string name="summary_pref_custom_mtu">Off by default — uses the active Android link MTU unchanged. Enable to set a manual value or use adaptive MTU probing.</string>
     <string name="title_pref_adaptive_mtu">Adaptive MTU</string>
-    <string name="summary_pref_adaptive_mtu">Use a safer MTU for the active mobile or Wi-Fi network. Reconnect VPN after changing this setting.</string>
+    <string name="summary_pref_adaptive_mtu">When enabled, uses the probed path MTU for the current Wi‑Fi or mobile link without an extra subtraction (or Android link MTU until you probe). Reconnect VPN after changing this setting.</string>
+    <string name="title_pref_probe_mtu_wifi">Pick MTU for Wi‑Fi</string>
+    <string name="title_pref_probe_mtu_cellular">Pick MTU for LTE</string>
+    <string name="summary_pref_probe_mtu_unset">Not set — will use Android link MTU</string>
+    <string name="summary_pref_probe_mtu_value">Saved: %1$d (tap to re-probe)</string>
+    <string name="summary_pref_probe_mtu_wrong_transport">Connect to this network to probe</string>
+    <string name="summary_pref_probe_mtu_running">Probing path MTU (DF)…</string>
+    <string name="toast_probe_mtu_success">Path MTU saved: %1$d</string>
+    <string name="toast_probe_mtu_failed">Could not probe path MTU</string>
     <string name="title_pref_notification_show_mtu">Show MTU in notification</string>
     <string name="summary_pref_notification_show_mtu">Show the current effective VPN MTU while connected.</string>
     <string name="title_pref_notification_show_active_outbound">Show active route in notification</string>
-    <string name="summary_pref_notification_show_active_outbound">Show the route that carried the most recent proxy traffic.</string>
+    <string name="summary_pref_notification_show_active_outbound">Shows the Smart Priority route currently selected for proxy traffic.</string>
+    <string name="title_pref_notification_show_routing_mode">Show routing mode in notification</string>
+    <string name="summary_pref_notification_show_routing_mode">Debug: show whether Smart Priority uses default (p0–p4) or whitelist (p5+) routing.</string>
+    <string name="notification_routing_mode">Routing: %1$s</string>
+    <string name="notification_routing_mode_default">default</string>
+    <string name="notification_routing_mode_whitelist">whitelist</string>
+    <string name="title_pref_notification_show_battery_usage">Show Winter battery usage</string>
+    <string name="summary_pref_notification_show_battery_usage">Optional Android UID energy estimate since VPN start. No battery statistics are collected while disabled.</string>
+    <string name="notification_battery_usage">Winter: ≈%1$.3f%% · ≈%2$.2f mAh · %3$.3f%%/h</string>
+    <string name="notification_battery_usage_mah">Winter: ≈%1$.1f mAh</string>
+    <string name="notification_battery_usage_waiting">Winter: collecting battery statistics…</string>
+    <string name="notification_battery_usage_unavailable">Winter: battery statistics unavailable</string>
 
 
     <string name="title_pref_domestic_dns">Domestic DNS (Optional)</string>
@@ -316,6 +360,10 @@
     <string name="title_pref_auto_update_interval">Auto Update Interval (Minutes, Min value 15)</string>
 
     <string name="title_core_loglevel">Log Level</string>
+    <string name="title_pref_failure_log_enabled">Record failure logs</string>
+    <string name="summary_pref_failure_log_enabled">Off by default. Saves VPN crash/failure breadcrumbs and nearby events only — no continuous logging.</string>
+    <string name="title_pref_failure_log_view">Failure logs</string>
+    <string name="summary_pref_failure_log_view">View, share, or clear saved crash reports.</string>
     <string name="title_outbound_domain_resolve_method">Outbound domain pre-resolve method</string>
     <string name="title_mode">Mode</string>
     <string name="title_mode_help">Click me for more help</string>
@@ -349,7 +397,16 @@
     <string name="sub_setting_filter">Remarks regular filter</string>
     <string name="sub_setting_enable">Enable update</string>
     <string name="sub_auto_update">Enable automatic update</string>
+    <string name="sub_auto_switch">Enable automatic server switching</string>
+    <string name="sub_auto_switch_summary">Pick the fastest working server and fail over automatically</string>
     <string name="sub_allow_insecure_url">Allow insecure HTTP address</string>
+    <string name="title_measure_subscription_delay">Measure subscription delay</string>
+    <string name="title_auto_switch_connect">Connect with auto-select</string>
+    <string name="subscription_show_more">Show more (%d left)</string>
+    <string name="subscription_auto_switch_selecting">Selecting the best server…</string>
+    <string name="subscription_auto_switch_no_server">No working servers found in this subscription</string>
+    <string name="subscription_auto_switch_started">Connected via auto-select: %s</string>
+    <string name="subscription_auto_switch_failover">Switched to backup: %s</string>
     <string name="sub_setting_pre_profile">Previous proxy config remarks</string>
     <string name="sub_setting_next_profile">Next proxy config remarks</string>
     <string name="sub_setting_pre_profile_tip">The config remarks exist and are unique</string>
@@ -399,15 +456,15 @@
     <string name="routing_settings_outbound_tag_hint" translatable="false">proxy / direct / block / &lt;remarks&gt;</string>
     <string name="routing_settings_outbound_tag">outboundTag</string>
 
-    <string name="connection_test_pending">Check Connectivity</string>
-    <string name="connection_test_testing">Testing…</string>
+    <string name="connection_test_pending">Tap to check connection</string>
+    <string name="connection_test_testing">Checking connection…</string>
     <string name="connection_test_testing_count">Testing %d configs…</string>
     <string name="connection_test_available">Success: Connection took %dms</string>
     <string name="connection_test_error">Fail to detect internet connection: %s</string>
     <string name="connection_test_fail">Internet Unavailable</string>
     <string name="connection_test_error_status_code">Error code: #%d</string>
-    <string name="connection_connected">Connected, tap to check connection</string>
-    <string name="connection_not_connected">Not connected</string>
+    <string name="connection_connected">Connected — tap to check</string>
+    <string name="connection_not_connected">Connect first to check connection</string>
     <string name="connection_runing_task_left">Number of running test tasks: %s</string>
 
     <string name="import_subscription_success">Subscription imported Successfully</string>
@@ -487,7 +544,6 @@
     <string-array name="browser_dialer_mode">
         <item>Disable</item>
         <item>OkHttp</item>
-        <item>WebView</item>
     </string-array>
 
     <string-array name="ui_mode_night">

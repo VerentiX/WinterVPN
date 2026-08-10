@@ -1,0 +1,118 @@
+
+##### MASTER #####
+HOST 139.100.225.91 172.17.0.1 10.8.1.4 10.8.1.20 10.8.1.2 
+=== inbounds node ownership ===
+{'id': 14, 'remark': '🇷🇺 Selectel - fast', 'enable': 0, 'port': 443, 'tag': 'in-443-udp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'listen', 'share_addr': ''}
+{'id': 20, 'remark': '[P0] 🇷🇺 Selectel - 1', 'enable': 1, 'port': 37830, 'tag': 'in-37830-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'custom', 'share_addr': 'sctl.zizmos.ru'}
+{'id': 27, 'remark': '[P0] 🇷🇺 Selectel - 2', 'enable': 1, 'port': 24146, 'tag': 'in-24146-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 31, 'remark': '🇳🇱 Nederlands - fast', 'enable': 0, 'port': 443, 'tag': 'n1-in-443-udp', 'node_id': 1, 'origin_node_guid': 'a9757463-19a6-49d7-8423-0ac2bea52185', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 36, 'remark': '[P5] 🇷🇺 Обход - Yandex', 'enable': 1, 'port': 8003, 'tag': 'in-8003-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 43, 'remark': '[P6] 🇷🇺 Обход - VK', 'enable': 1, 'port': 8030, 'tag': 'in-8030-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 44, 'remark': '[P15] 🇷🇺 Обход - TimeWeb', 'enable': 1, 'port': 8040, 'tag': 'in-8040-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 47, 'remark': '[P0] 🇷🇺 Selectel - flare', 'enable': 0, 'port': 45328, 'tag': 'in-45328-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 48, 'remark': '[P0] 🇷🇺 Selectel - 4', 'enable': 1, 'port': 53304, 'tag': 'in-53304-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 50, 'remark': '[P10] 🇷🇺 Обход - VK 2', 'enable': 1, 'port': 9003, 'tag': 'in-9003-tcp', 'node_id': 2, 'origin_node_guid': '914f8e5d-aeb9-41cc-8f99-98c1cc9b5839', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 57, 'remark': '[P1] 🇷🇺 Moscow - 2', 'enable': 1, 'port': 12349, 'tag': 'n2-in-12349-tcp', 'node_id': 2, 'origin_node_guid': '914f8e5d-aeb9-41cc-8f99-98c1cc9b5839', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 59, 'remark': '[P1] 🇷🇺 Moscow - 1', 'enable': 1, 'port': 443, 'tag': 'n2-in-443-tcp', 'node_id': 2, 'origin_node_guid': '914f8e5d-aeb9-41cc-8f99-98c1cc9b5839', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 71, 'remark': '[P0] 🇷🇺 Selectel - 3', 'enable': 0, 'port': 27676, 'tag': 'in-27676-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'custom', 'share_addr': 'flarecdn.zizmos.ru'}
+{'id': 72, 'remark': '[P7] 🇷🇺 Обход - Beget CDN', 'enable': 1, 'port': 8050, 'tag': 'in-8050-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'node', 'share_addr': ''}
+=== settings sub* / panel* / node* ===
+panelGuid = 1efad2d2-ce6c-4d2d-adcf-0356bf9927f8
+panelOutbound = 
+subAnnounce = 
+subCertFile = /root/cert/sctl.zizmos.ru/fullchain.pem
+subClashAutoDetect = false
+subClashEnable = true
+subClashEnableRouting = true
+subClashPath = /clash/
+subClashRules = # ВНИМАНИЕ! ЭТО БЕТА
+# НЕ ДЛЯ REMNAWAVE, А ДЛЯ РУЧНОЙ ВСТАВКИ!
+# Если нет ссылки - удалите блок выше, расскоментируйте блок ниже и заполните
+# можете воспользоваться конвертером https://dikozimpact.github.io/clash-convertor/
+#proxies:
+#- name: <PROXYNAME> (EXAMPLE)
+#  type: vless
+#  server: <server ...
+subClashURI = 
+subClashUserAgentRegex = 
+subDomain = 
+subEmailInRemark = false
+subEnable = true
+subEnableRouting = true
+subEncrypt = true
+subHideSettings = true
+subIncyEnableRouting = false
+subIncyRoutingRules = 
+subJsonAlwaysArray = false
+subJsonAutoDetect = false
+subJsonEnable = true
+subJsonFinalMask = {"tcp":[{"type":"fragment","settings":{"packets":"tlshello","lengths":["100-200"],"maxSplit":"2-4","delays":["1-3"]}}],"udp":[]}
+subJsonMux = 
+subJsonPath = /jsonic/
+subJsonRules = 
+subJsonURI = 
+subJsonUserAgentRegex = 
+subKeyFile = ***
+subListen = 
+subPath = /kodkgrd/
+subPort = 5843
+subProfileUrl = 
+subRoutingRules = happ://routing/onadd/eyJOYW1lIjoiUm9zY29tVlBOIFdoaXRlbGlzdCIsIkdsb2JhbFByb3h5IjoidHJ1ZSIsIlJvdXRlT3JkZXIiOiJibG9jay1wcm94eS1kaXJlY3QiLCJSZW1vdGVETlNUeXBlIjoiRG9IIiwiUmVtb3RlRE5TRG9tYWluIjoiaHR0cHM6Ly84LjguOC44L2Rucy1xdWVyeSIsIlJlbW90ZUROU0lQIjoiOC44LjguOCIsIkRvbWVzdGljRE5TVHlwZSI6IkRvSCIsIkRvbWVzdGl...
+subShowIdentityOnAllLinks = false
+subShowInfo = true
+subSupportUrl = 
+subThemeDir = 
+subTitle = TheBestVPN
+subURI = 
+subUpdates = 12
+=== Petya client_inbounds ===
+[<sqlite3.Row object at 0x731eb3279d20>]
+links [{'client_id': 24, 'inbound_id': 20, 'flow_override': '', 'created_at': 1786012067632}, {'client_id': 24, 'inbound_id': 27, 'flow_override': '', 'created_at': 1786012067639}, {'client_id': 24, 'inbound_id': 43, 'flow_override': '', 'created_at': 1786012067657}, {'client_id': 24, 'inbound_id': 44, 'flow_override': '', 'created_at': 1786012067661}, {'client_id': 24, 'inbound_id': 48, 'flow_override': '', 'created_at': 1786012067667}, {'client_id': 24, 'inbound_id': 71, 'flow_override': '', 'created_at': 1786012067797}, {'client_id': 24, 'inbound_id': 72, 'flow_override': '', 'created_at': 1786012067805}, {'client_id': 24, 'inbound_id': 57, 'flow_override': '', 'created_at': 1786015128072}, {'client_id': 24, 'inbound_id': 59, 'flow_override': '', 'created_at': 1786015128073}]
+=== panelGuid ===
+1efad2d2-ce6c-4d2d-adcf-0356bf9927f8
+
+##### NODE #####
+HOST 194.67.205.140 172.17.0.1 10.8.1.3 10.8.1.3 2a0a:9300:d1::2723 fd10:8:1::3 
+=== inbounds node ownership ===
+{'id': 7, 'remark': '[P1] 🇷🇺 Moscow - 2', 'enable': 1, 'port': 12349, 'tag': 'in-12349-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 9, 'remark': '[P10] 🇷🇺 Обход - VK 2', 'enable': 1, 'port': 9003, 'tag': 'in-9003-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'node', 'share_addr': ''}
+{'id': 10, 'remark': '[P1] 🇷🇺 Moscow - 1', 'enable': 1, 'port': 443, 'tag': 'in-443-tcp', 'node_id': None, 'origin_node_guid': '', 'share_addr_strategy': 'node', 'share_addr': ''}
+=== settings sub* / panel* / node* ===
+panelGuid = 914f8e5d-aeb9-41cc-8f99-98c1cc9b5839
+panelOutbound = 
+subAnnounce = 
+subCertFile = /root/cert/msc.zizmos.ru/fullchain.pem
+subClashEnable = false
+subClashEnableRouting = false
+subClashPath = /clash/
+subClashRules = 
+subClashURI = 
+subDomain = 
+subEnable = true
+subEnableRouting = false
+subEncrypt = true
+subHideSettings = false
+subIncyEnableRouting = false
+subIncyRoutingRules = 
+subJsonEnable = true
+subJsonFinalMask = {"tcp":[{"type":"fragment","settings":{"packets":"tlshello","lengths":["10-30"],"delays":["5-15"],"maxSplit":"3-5"}}],"udp":[]}
+subJsonMux = 
+subJsonPath = /jesonic/
+subJsonRules = 
+subJsonURI = 
+subKeyFile = ***
+subListen = 
+subPath = /eikdsvj/
+subPort = 8362
+subProfileUrl = 
+subRoutingRules = 
+subSupportUrl = 
+subThemeDir = 
+subTitle = 
+subURI = 
+subUpdates = 12
+=== Petya client_inbounds ===
+[<sqlite3.Row object at 0x7808e1c9a830>]
+links [{'client_id': 2, 'inbound_id': 7, 'flow_override': '', 'created_at': 1786014840133}, {'client_id': 2, 'inbound_id': 10, 'flow_override': '', 'created_at': 1786014840149}]
+=== panelGuid ===
+914f8e5d-aeb9-41cc-8f99-98c1cc9b5839

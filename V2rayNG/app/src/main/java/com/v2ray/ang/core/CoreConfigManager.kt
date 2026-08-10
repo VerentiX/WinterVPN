@@ -41,6 +41,7 @@ object CoreConfigManager {
         "pinterest",
         "steam",
         "epic-games",
+        "epicgames",
         "riot",
         "escapefromtarkov",
         "faceit",
@@ -183,11 +184,10 @@ object CoreConfigManager {
      * companion databases preserve RoscomVPN categories which are not guaranteed
      * by the standard sets, so imported subscriptions still load unchanged.
      */
-    private fun applyGeoRuleCompatibility(json: JsonObject) {
+    internal fun applyGeoRuleCompatibility(json: JsonObject) {
         val rules = json.getAsJsonObject("routing")
             ?.getAsJsonArray("rules")
-            ?: return
-        rules.forEach { element ->
+        rules?.forEach { element ->
             val rule = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
             rule.getAsJsonArray("domain")?.let { domains ->
                 rule.add(
@@ -203,6 +203,46 @@ object CoreConfigManager {
             rule.getAsJsonArray("ip")?.let { ips ->
                 rule.add(
                     "ip",
+                    rewriteGeoRules(
+                        ips,
+                        "geoip:",
+                        AppConfig.GEOIP_COMPAT_DAT,
+                        roscomGeoIpCategories
+                    )
+                )
+            }
+        }
+
+        val servers = json.getAsJsonObject("dns")
+            ?.getAsJsonArray("servers")
+            ?: return
+        servers.forEach { element ->
+            val server = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            server.getAsJsonArray("domains")?.let { domains ->
+                server.add(
+                    "domains",
+                    rewriteGeoRules(
+                        domains,
+                        "geosite:",
+                        AppConfig.GEOSITE_COMPAT_DAT,
+                        roscomGeoSiteCategories
+                    )
+                )
+            }
+            server.getAsJsonArray("expectedIPs")?.let { ips ->
+                server.add(
+                    "expectedIPs",
+                    rewriteGeoRules(
+                        ips,
+                        "geoip:",
+                        AppConfig.GEOIP_COMPAT_DAT,
+                        roscomGeoIpCategories
+                    )
+                )
+            }
+            server.getAsJsonArray("expectIPs")?.let { ips ->
+                server.add(
+                    "expectIPs",
                     rewriteGeoRules(
                         ips,
                         "geoip:",
@@ -301,7 +341,7 @@ object CoreConfigManager {
         }
 
         applyObservability(v2rayConfig, balancerStrategies)
-        applySpeedDisabled(v2rayConfig)
+        stripTrafficStats(v2rayConfig)
         resolveOutboundDomainsToHosts(v2rayConfig)
 
         return v2rayConfig
@@ -828,14 +868,10 @@ object CoreConfigManager {
         }
     }
 
-    /**
-     * Remove speed-test runtime sections when the feature is disabled.
-     */
-    private fun applySpeedDisabled(v2rayConfig: V2rayConfig) {
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_SPEED_ENABLED) != true) {
-            v2rayConfig.stats = null
-            v2rayConfig.policy = null
-        }
+    /** Xray stats/policy are unused; omit them to reduce core overhead. */
+    private fun stripTrafficStats(v2rayConfig: V2rayConfig) {
+        v2rayConfig.stats = null
+        v2rayConfig.policy = null
     }
 
     /*

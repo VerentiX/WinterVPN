@@ -1,0 +1,18 @@
+switched
+--- UPSTREAM lines ---
+UPSTREAM_JSON_BASE=https://sctl.zizmos.ru:5843/jsonic/
+UPSTREAM_VERIFY_TLS=true
+UPSTREAM_TIMEOUT_SECONDS=15
+MAX_PROFILES=12
+PRIORITY_CONFIG_PATH=/etc/3xui-happ-priorities.json
+active
+upstream_profiles 8
+auto_status 200 size 10704
+x-balancer-tiers 0,1,6,7,15
+x-generated-by 3x-ui-happ-sticky-failover-v3.4
+x-balancer-mode sticky-failover
+profile-web-page-url https://sctl.zizmos.ru:5843/jsonic/qk13p3uu5farhw5x
+tiers ['p0000', 'p0001', 'p0006', 'p0007', 'p0015']
+tags ['route-p0000-0c12a0938b29', 'route-p0000-629abf25ca0e', 'route-p0000-8ae202db3ccb', 'route-p0001-1def574d32e1', 'route-p0001-43ce5f106f93', 'route-p0006-d8db4489d902', 'route-p0007-dd882821e7a5', 'route-p0015-660089ef547e']
+
+exit=0

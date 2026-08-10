@@ -12,6 +12,7 @@ import com.tencent.mmkv.MMKV
 import com.v2ray.ang.AppConfig.ANG_PACKAGE
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.AppUpdateScheduler
+import com.v2ray.ang.util.FailureLogRecorder
 
 class AngApplication : MultiDexApplication() {
     companion object {
@@ -45,6 +46,8 @@ class AngApplication : MultiDexApplication() {
         // Ensure critical preference defaults are present in MMKV early
         SettingsManager.initApp(this)
         SettingsManager.setNightMode()
+        // Both UI and :RunSoLibV2RayDaemon need this — native crashes kill the VPN process.
+        FailureLogRecorder.init(this)
         if (isMainProcess()) {
             AppUpdateScheduler.schedule(this)
         }

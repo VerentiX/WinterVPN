@@ -2,6 +2,7 @@ package com.v2ray.ang.core
 
 import android.app.Service
 import android.os.PowerManager
+import android.os.SystemClock
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -25,6 +26,8 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URI
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Replaces eager Xray health checks with an application-managed priority failover.
@@ -35,11 +38,16 @@ import java.util.concurrent.TimeUnit
  */
 object PriorityFailoverManager {
     /** User-tunable active-route check interval while the display is on. */
-    internal const val SCREEN_ON_ROUTE_PROBE_INTERVAL_MS = 5_000L
+    internal const val SCREEN_ON_ROUTE_PROBE_INTERVAL_MS = 15_000L
 
     /** User-tunable active-route check interval while the display is off. */
-    internal const val SCREEN_OFF_ROUTE_PROBE_INTERVAL_MS = 60_000L
-    private const val FAILURES_BEFORE_FAILOVER = 1
+    internal const val SCREEN_OFF_ROUTE_PROBE_INTERVAL_MS = 5 * 60_000L
+    /** Ignore isolated probe glitches; fail over only after a confirmed outage. */
+    private const val FAILURES_BEFORE_FAILOVER = 3
+    /** Confirmation probes are deliberately quicker than the normal user cadence. */
+    private const val FAILURE_CONFIRMATION_BASE_DELAY_MS = 1_000L
+    private const val ALL_ROUTES_DOWN_RETRY_INITIAL_MS = 5_000L
+    private const val ALL_ROUTES_DOWN_RETRY_MAX_SCREEN_ON_MS = 60_000L
     /** First check for a recovered, higher-priority route after failover. */
     internal const val HIGHER_PRIORITY_PROBE_INITIAL_INTERVAL_MS = 5 * 60_000L
 
@@ -47,6 +55,9 @@ object PriorityFailoverManager {
     internal const val HIGHER_PRIORITY_PROBE_MAX_INTERVAL_MS = 10 * 60_000L
     private const val ROUTE_PROBE_TIMEOUT_MS = 4_000L
     private const val ROUTE_PROBE_ATTEMPTS = 1
+    /** Soft reload after a route switch must finish (or fail) within this window. */
+    private const val RELOAD_WAIT_TIMEOUT_MS = 20_000L
+    private const val PROBE_WAKE_LOCK_TIMEOUT_MS = 45_000L
 
     private val lock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -57,6 +68,14 @@ object PriorityFailoverManager {
     private var recoveryIntervalMs = HIGHER_PRIORITY_PROBE_INITIAL_INTERVAL_MS
     @Volatile
     private var isScreenInteractive = true
+    @Volatile
+    private var wakeLock: PowerManager.WakeLock? = null
+    private val reloadGeneration = AtomicInteger(0)
+    private val probeClients = ConcurrentHashMap<Int, OkHttpClient>()
+    @Volatile
+    private var completedReloadGeneration = 0
+    @Volatile
+    private var lastReloadSucceeded = false
 
     private data class State(
         val guid: String,
@@ -112,7 +131,10 @@ object PriorityFailoverManager {
 
     fun onCoreStarted(service: Service) {
         synchronized(lock) { pendingPreviousIndex = null }
+        lastReloadSucceeded = true
+        completedReloadGeneration = reloadGeneration.get()
         isScreenInteractive = service.getSystemService(PowerManager::class.java)?.isInteractive ?: true
+        ensureWakeLock(service)
         val initial = synchronized(lock) { state } ?: return
 
         LogUtil.transport(
@@ -121,77 +143,161 @@ object PriorityFailoverManager {
                 "screen=${if (isScreenInteractive) "on" else "off"}, " +
                 "probe=${initial.plan.probeUrl ?: SettingsManager.getDelayTestUrl()}"
         )
-        startMonitor()
+        CoreServiceManager.setActiveOutboundTag(initial.plan.routes[initial.activeIndex])
+        CoreServiceManager.setActiveRoutingMode(
+            RoscomPriorityRouting.modeForActiveRoute(initial.plan, initial.activeIndex),
+        )
+        startMonitor(probeImmediately = true)
     }
 
     /** Apply a new probe cadence immediately when the display state changes. */
     fun onScreenStateChanged(interactive: Boolean) {
-        if (isScreenInteractive == interactive) return
+        if (isScreenInteractive == interactive) {
+            if (interactive) ensureMonitorRunning(probeImmediately = true)
+            return
+        }
         isScreenInteractive = interactive
         LogUtil.transport(
             "Smart priority screen=${if (interactive) "on" else "off"}; " +
                 "probeInterval=${activeProbeIntervalMs()}ms"
         )
-        startMonitor()
+        startMonitor(probeImmediately = interactive)
     }
 
-    private fun activeProbeIntervalMs(): Long = if (isScreenInteractive) {
-        SCREEN_ON_ROUTE_PROBE_INTERVAL_MS
-    } else {
-        SCREEN_OFF_ROUTE_PROBE_INTERVAL_MS
+    /** Doze maintenance window ended — run a probe without waiting for the next interval. */
+    fun onDeviceExitedIdle() {
+        if (synchronized(lock) { state } == null) return
+        LogUtil.transport("Smart priority: device left idle; probing now")
+        startMonitor(probeImmediately = true)
     }
 
-    private fun startMonitor() {
+    /** Restart the monitor if a failed reload left it stopped. */
+    fun ensureMonitorRunning(probeImmediately: Boolean = false) {
+        if (synchronized(lock) { state } == null) return
+        val job = monitorJob
+        if (job == null || !job.isActive) {
+            LogUtil.transport("Smart priority: restarting idle monitor")
+            startMonitor(probeImmediately = probeImmediately)
+        }
+    }
+
+    /**
+     * After LTE/Wi-Fi handover the current route is kept, but a better priority
+     * outbound may become reachable on the new transport. Force an immediate
+     * recovery probe instead of waiting for the normal multi-minute backoff.
+     */
+    fun requestImmediatePriorityReselection() {
+        synchronized(lock) {
+            val current = state ?: return
+            if (current.plan.tierIndexForRoute(current.activeIndex) > 0) {
+                nextRecoveryCheckAt = 0L
+                recoveryIntervalMs = HIGHER_PRIORITY_PROBE_INITIAL_INTERVAL_MS
+            }
+        }
+        LogUtil.transport("Smart priority: immediate reselection after transport change")
+        startMonitor(probeImmediately = true)
+    }
+
+    /** Unblock [awaitPriorityReload] when soft reload aborts before [onCoreStarted]. */
+    fun notifyReloadAborted() {
+        lastReloadSucceeded = false
+        completedReloadGeneration = reloadGeneration.get()
+        ensureMonitorRunning(probeImmediately = true)
+    }
+
+    private fun activeProbeIntervalMs(): Long =
+        SettingsManager.getPriorityProbeIntervalMs(screenOn = isScreenInteractive)
+
+    /** Apply user-edited cadence without waiting for the previous delay to expire. */
+    fun onProbeIntervalsChanged() {
+        if (synchronized(lock) { state } == null) return
+        LogUtil.transport("Smart priority probe intervals changed; rescheduling monitor")
+        startMonitor(probeImmediately = false)
+    }
+
+    private fun ensureWakeLock(service: Service) {
+        if (wakeLock != null) return
+        val pm = service.getSystemService(PowerManager::class.java) ?: return
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "v2rayNG:PriorityFailover").apply {
+            setReferenceCounted(false)
+        }
+    }
+
+    private fun startMonitor(probeImmediately: Boolean = false) {
         monitorJob?.cancel()
         if (synchronized(lock) { state } == null) return
         monitorJob = scope.launch {
             var consecutiveFailures = 0
+            var allRoutesDownRetryMs = ALL_ROUTES_DOWN_RETRY_INITIAL_MS
+            var skipDelay = probeImmediately
             val initialState = synchronized(lock) { state } ?: return@launch
             val chooseInitialRoute = synchronized(lock) {
                 initialState.needsInitialSelection
             }
             if (chooseInitialRoute) {
                 val previousInitialIndex = initialState.activeIndex
-                val initialRoute = probeRoutesInParallel(
-                    initialState,
-                    initialState.plan.routes.indices.toList(),
-                )
+                val initialRoute = withProbeWakeLock {
+                    probeRoutesInParallel(
+                        initialState,
+                        initialState.plan.routes.indices.toList(),
+                    )
+                }
                 synchronized(lock) {
                     if (state === initialState) initialState.needsInitialSelection = false
                 }
-                if (initialRoute != null && initialRoute != previousInitialIndex &&
-                    switchRoute(initialState, previousInitialIndex, initialRoute)
-                ) {
-                    LogUtil.transport(
-                        "Smart priority initial selection: " +
-                            "${initialState.plan.routes[previousInitialIndex]} -> " +
-                            initialState.plan.routes[initialRoute]
-                    )
-                    CoreServiceManager.reloadPriorityRoute()
-                    return@launch
+                if (initialRoute != null && initialRoute != previousInitialIndex) {
+                    when (
+                        commitRouteSwitch(
+                            initialState,
+                            previousInitialIndex,
+                            initialRoute,
+                            reason = "initial selection",
+                        )
+                    ) {
+                        null -> Unit
+                        true -> skipDelay = true
+                        false -> return@launch
+                    }
                 }
             }
             while (true) {
-                delay(activeProbeIntervalMs())
+                if (!skipDelay) {
+                    delay(activeProbeIntervalMs())
+                }
+                skipDelay = false
                 val current = synchronized(lock) { state } ?: return@launch
                 val activeIndex = current.activeIndex
                 if (isRecoveryDue(current, activeIndex)) {
-                    val betterRoute = findHigherPriorityRoute(current, activeIndex)
-                    if (betterRoute != null && switchRoute(current, activeIndex, betterRoute)) {
-                        LogUtil.transport(
-                            "Smart priority recovery: ${current.plan.routes[activeIndex]} -> " +
-                                current.plan.routes[betterRoute]
-                        )
-                        CoreServiceManager.reloadPriorityRoute()
-                        return@launch
+                    val betterRoute = withProbeWakeLock {
+                        findHigherPriorityRoute(current, activeIndex)
                     }
-                    postponeRecoveryCheck()
+                    if (betterRoute != null) {
+                        when (
+                            commitRouteSwitch(
+                                current,
+                                activeIndex,
+                                betterRoute,
+                                reason = "recovery",
+                            )
+                        ) {
+                            null -> postponeRecoveryCheck()
+                            true -> {
+                                consecutiveFailures = 0
+                                skipDelay = true
+                                continue
+                            }
+                            false -> return@launch
+                        }
+                    } else {
+                        postponeRecoveryCheck()
+                    }
                 }
                 val activeTag = current.plan.routes[activeIndex]
-                val routeWorks = probeRoute(current, activeTag)
+                val routeWorks = withProbeWakeLock { probeRoute(current, activeTag) }
 
                 if (routeWorks != null) {
                     consecutiveFailures = 0
+                    allRoutesDownRetryMs = ALL_ROUTES_DOWN_RETRY_INITIAL_MS
                     continue
                 }
                 consecutiveFailures++
@@ -199,23 +305,142 @@ object PriorityFailoverManager {
                     "Smart priority probe failed for $activeTag " +
                         "($consecutiveFailures/$FAILURES_BEFORE_FAILOVER)"
                 )
-                if (consecutiveFailures < FAILURES_BEFORE_FAILOVER) continue
-
-                val replacement = findNextWorkingRoute(current, activeIndex)
-                if (replacement == null) {
-                    LogUtil.transport("Smart priority failover: no working fallback route")
-                    consecutiveFailures = 0
+                if (consecutiveFailures < FAILURES_BEFORE_FAILOVER) {
+                    // One failed HTTP request is not enough evidence to tear down a
+                    // working tunnel. Confirm quickly (1 s, then 2 s) instead of
+                    // waiting for the normal screen-on/off interval.
+                    delay(FAILURE_CONFIRMATION_BASE_DELAY_MS * consecutiveFailures)
+                    skipDelay = true
                     continue
                 }
 
-                val switched = switchRoute(current, activeIndex, replacement)
-                if (switched) {
+                val replacement = withProbeWakeLock { findNextWorkingRoute(current, activeIndex) }
+                if (replacement == null) {
                     LogUtil.transport(
-                        "Smart priority failover: $activeTag -> ${current.plan.routes[replacement]}"
+                        "Smart priority failover: no working route; retry in " +
+                            "${allRoutesDownRetryMs}ms"
                     )
-                    CoreServiceManager.reloadPriorityRoute()
-                    return@launch
+                    consecutiveFailures = 0
+                    delay(allRoutesDownRetryMs)
+                    allRoutesDownRetryMs = (allRoutesDownRetryMs * 2).coerceAtMost(
+                        if (isScreenInteractive) ALL_ROUTES_DOWN_RETRY_MAX_SCREEN_ON_MS
+                        else SCREEN_OFF_ROUTE_PROBE_INTERVAL_MS
+                    )
+                    skipDelay = true
+                    continue
                 }
+
+                when (
+                    commitRouteSwitch(
+                        current,
+                        activeIndex,
+                        replacement,
+                        reason = "failover",
+                    )
+                ) {
+                    null -> Unit
+                    true -> {
+                        consecutiveFailures = 0
+                        allRoutesDownRetryMs = ALL_ROUTES_DOWN_RETRY_INITIAL_MS
+                        skipDelay = true
+                    }
+                    false -> return@launch
+                }
+            }
+        }
+    }
+
+    /**
+     * Apply a Smart Priority route change.
+     *
+     * @return `true` keep this monitor running (seamless switch or failed reload),
+     *   `false` exit because a core reload started a replacement monitor,
+     *   `null` when the switch was rejected (state raced).
+     */
+    private suspend fun commitRouteSwitch(
+        current: State,
+        fromIndex: Int,
+        toIndex: Int,
+        reason: String,
+    ): Boolean? {
+        if (!switchRoute(current, fromIndex, toIndex)) return null
+        val plan = synchronized(lock) { state?.plan } ?: return null
+        val fromTag = plan.routes[fromIndex]
+        val toTag = plan.routes[toIndex]
+        val fromMode = RoscomPriorityRouting.modeForRouteTag(fromTag)
+        val toMode = RoscomPriorityRouting.modeForRouteTag(toTag)
+
+        CoreServiceManager.setActiveOutboundTag(toTag)
+        CoreServiceManager.setActiveRoutingMode(toMode)
+
+        if (fromMode == toMode) {
+            // Same Roscom profile: same-mode outbounds already sit in the balancer,
+            // so existing TCP on the previous outbound can drain while new flows move.
+            synchronized(lock) { pendingPreviousIndex = null }
+            LogUtil.transport(
+                "Smart priority seamless $reason: $fromTag -> $toTag (profile=$toMode)"
+            )
+            return true
+        }
+
+        LogUtil.transport(
+            "Smart priority $reason needs core reload for routing profile " +
+                "$fromMode -> $toMode ($fromTag -> $toTag)"
+        )
+        return awaitPriorityReload()
+    }
+
+    /**
+     * Request a soft reload and wait for [onCoreStarted].
+     * @return false when a new monitor was started by [onCoreStarted] (caller must exit);
+     *   true when this monitor should keep running.
+     */
+    private suspend fun awaitPriorityReload(): Boolean {
+        lastReloadSucceeded = false
+        val generation = reloadGeneration.incrementAndGet()
+        val requested = CoreServiceManager.reloadPriorityRoute()
+        if (!requested) {
+            LogUtil.transport("Smart priority reload request failed; rolling back")
+            rollbackPendingSwitch()
+            return true
+        }
+
+        val deadline = SystemClock.elapsedRealtime() + RELOAD_WAIT_TIMEOUT_MS
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (completedReloadGeneration >= generation) {
+                return !lastReloadSucceeded
+            }
+            delay(200L)
+        }
+
+        LogUtil.transport(
+            "Smart priority reload timed out after ${RELOAD_WAIT_TIMEOUT_MS}ms; " +
+                "requesting hard recovery"
+        )
+        if (!CoreServiceManager.recoverStalledPriorityReload()) {
+            LogUtil.transport("Smart priority hard recovery was rejected; rolling back")
+            rollbackPendingSwitch()
+            notifyReloadAborted()
+            return true
+        }
+        // Recovery will start a fresh monitor from onCoreStarted(). Stop this
+        // instance so it cannot switch routes while the TUN is being rebuilt.
+        return false
+    }
+
+    private suspend fun <T> withProbeWakeLock(block: suspend () -> T): T {
+        val lock = wakeLock
+        try {
+            if (lock != null && !lock.isHeld) {
+                @Suppress("DEPRECATION")
+                lock.acquire(PROBE_WAKE_LOCK_TIMEOUT_MS)
+            }
+            return block()
+        } finally {
+            try {
+                if (lock?.isHeld == true) lock.release()
+            } catch (_: RuntimeException) {
+                // ignore double-release races
             }
         }
     }
@@ -249,13 +474,15 @@ object PriorityFailoverManager {
     /** Probe through a route-specific HTTP inbound owned by the running core. */
     private fun probeRoute(current: State, routeTag: String): Long? {
         val port = current.probePorts[routeTag] ?: return null
-        val client = OkHttpClient.Builder()
-            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(AppConfig.LOOPBACK, port)))
-            .connectTimeout(ROUTE_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            .readTimeout(ROUTE_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            .callTimeout(ROUTE_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            .retryOnConnectionFailure(false)
-            .build()
+        val client = probeClients.getOrPut(port) {
+            OkHttpClient.Builder()
+                .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(AppConfig.LOOPBACK, port)))
+                .connectTimeout(ROUTE_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .readTimeout(ROUTE_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .callTimeout(ROUTE_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .retryOnConnectionFailure(false)
+                .build()
+        }
         val request = Request.Builder()
             .url(current.plan.probeUrl ?: SettingsManager.getDelayTestUrl())
             .header("Connection", "close")
@@ -326,6 +553,18 @@ object PriorityFailoverManager {
         }
     }
 
+    /**
+     * Re-allocate priority-probe inbound ports before a reload retry.
+     * Needed when the previous core did not release ports before the next startLoop.
+     */
+    fun rotateProbePortsForReload(): Boolean = synchronized(lock) {
+        val current = state ?: return false
+        clearProbeClients()
+        val probePorts = allocateProbePorts(current.sourceConfig, current.plan.routes)
+        state = current.copy(probePorts = probePorts)
+        true
+    }
+
     /** Restore the route used by the still-running config if a soft reload failed. */
     fun rollbackPendingSwitch() {
         synchronized(lock) {
@@ -341,6 +580,14 @@ object PriorityFailoverManager {
     fun stop(clearState: Boolean) {
         monitorJob?.cancel()
         monitorJob = null
+        clearProbeClients()
+        try {
+            wakeLock?.let { lock ->
+                if (lock.isHeld) lock.release()
+            }
+        } catch (_: RuntimeException) {
+        }
+        wakeLock = null
         if (clearState) {
             synchronized(lock) {
                 state = null
@@ -348,7 +595,14 @@ object PriorityFailoverManager {
                 nextRecoveryCheckAt = Long.MAX_VALUE
                 recoveryIntervalMs = HIGHER_PRIORITY_PROBE_INITIAL_INTERVAL_MS
             }
+            completedReloadGeneration = reloadGeneration.get()
+            CoreServiceManager.setActiveRoutingMode(null)
         }
+    }
+
+    private fun clearProbeClients() {
+        probeClients.values.forEach { it.connectionPool.evictAll() }
+        probeClients.clear()
     }
 }
 
@@ -464,20 +718,40 @@ internal object PriorityFailoverConfig {
         probePorts: Map<String, Int> = emptyMap(),
     ): JsonObject {
         val result = source.deepCopy()
+        // Apply Happ-style Roscom rules for the active priority before probe rules
+        // are prepended. Soft reload keeps activeIndex, so failover to p5+ does not
+        // restart selection at p0.
+        RoscomPriorityRouting.apply(result, plan, activeIndex)
+        CoreConfigManager.applyGeoRuleCompatibility(result)
         val routing = result.objectOrNull("routing") ?: return result
         val balancers = routing.arrayOrNull("balancers") ?: return result
+        // Same Roscom profile only: all candidate outbounds stay in the balancer so
+        // route changes within FULL↔FULL or WHITELIST↔WHITELIST need no core restart
+        // (existing TCP drains on the old outbound; new flows use leastLoad).
+        // Crossing FULL↔WHITELIST still reloads — routing/DNS rules must change.
+        val mode = RoscomPriorityRouting.modeForActiveRoute(plan, activeIndex)
+        val modeRoutes = plan.routes.filter {
+            RoscomPriorityRouting.modeForRouteTag(it) == mode
+        }.ifEmpty {
+            listOfNotNull(plan.routes.getOrNull(activeIndex))
+        }
         balancers.asSequence()
             .mapNotNull { it.takeIf { element -> element.isJsonObject }?.asJsonObject }
             .filter { it.stringOrNull("tag") in plan.balancerTags }
             .forEach { balancer ->
                 if (balancer.stringOrNull("tag") == plan.rootBalancerTag) {
-                    balancer.add("selector", JsonArray().apply { add(plan.routes[activeIndex]) })
+                    balancer.add(
+                        "selector",
+                        JsonArray().apply { modeRoutes.forEach { add(it) } },
+                    )
                 }
                 balancer.remove("fallbackTag")
-                balancer.add("strategy", JsonObject().apply { addProperty("type", "random") })
+                balancer.add(
+                    "strategy",
+                    JsonObject().apply { addProperty("type", "leastLoad") },
+                )
             }
-        result.remove("burstObservatory")
-        result.remove("observatory")
+        // Keep burstObservatory so leastLoad can skip dead outbounds without a reload.
         addRouteProbeInbounds(result, plan, probePorts)
         return result
     }

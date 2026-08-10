@@ -13,5 +13,12 @@ data class SubscriptionItem(
     var filter: String? = null,
     var allowInsecureUrl: Boolean = false,
     var userAgent: String? = null,
+    /** Optional metadata returned by subscription providers in HTTP response headers. */
+    var profileTitle: String? = null,
+    var uploadBytes: Long = -1,
+    var downloadBytes: Long = -1,
+    var totalBytes: Long = -1,
+    /** Unix time in seconds, as defined by Subscription-Userinfo. */
+    var expireAt: Long = -1,
 )
 

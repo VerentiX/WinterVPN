@@ -1,0 +1,569 @@
+
+
+########## MASTER 139.100.225.91 ##########
+HOST ubuntu-bridge
+IP 139.100.225.91
+
+=== settings (interesting) ===
+externalTrafficInformEnable = false
+externalTrafficInformURI = 
+ldapBaseDN = 
+ldapEnable = false
+ldapPort = 389
+ldapSyncCron = @every 1m
+ldapVlessField = vless_enabled
+panelGuid = 1efad2d2-ce6c-4d2d-adcf-0356bf9927f8
+panelOutbound = 
+remarkModel = -io
+remarkTemplate = {{INBOUND}}
+secret = ***
+smtpEnable = false
+smtpEnabledEvents = login.attempt,cpu.high
+smtpPort = 587
+subAnnounce = 
+subCertFile = /root/cert/sctl.zizmos.ru/fullchain.pem
+subClashAutoDetect = false
+subClashEnable = true
+subClashEnableRouting = true
+subClashPath = /clash/
+subClashRules = # ВНИМАНИЕ! ЭТО БЕТА
+# НЕ ДЛЯ REMNAWAVE, А ДЛЯ РУЧНОЙ ВСТАВКИ!
+# Если нет ссылки - удалите блок выше, расскоментируйте блок ниже и заполните
+# можете воспользоваться конвертером https://dikozimpact.github.io/clash-convertor/
+#proxies:
+#- name: <PROXYNAME> (EXAMPLE)
+#  type: vless
+#  server: <server address>
+#  port: 443
+#  ip-version: ipv4
+#  uuid: <uuid>
+#  network: tcp
+#  tls: true
+#  udp: true
+#  flow: xtls-rprx-vision
+#  servername: <servername>
+#  reality-opts:
+#    public-key: <public key>...
+subClashURI = 
+subClashUserAgentRegex = 
+subDomain = 
+subEmailInRemark = false
+subEnable = true
+subEnableRouting = true
+subEncrypt = true
+subHideSettings = true
+subIncyEnableRouting = false
+subIncyRoutingRules = 
+subJsonAlwaysArray = false
+subJsonAutoDetect = false
+subJsonEnable = true
+subJsonFinalMask = {"tcp":[{"type":"fragment","settings":{"packets":"tlshello","lengths":["100-200"],"maxSplit":"2-4","delays":["1-3"]}}],"udp":[]}
+subJsonMux = 
+subJsonPath = /jsonic/
+subJsonRules = 
+subJsonURI = 
+subJsonUserAgentRegex = 
+subKeyFile = ***
+subListen = 
+subPath = /kodkgrd/
+subPort = 5843
+subProfileUrl = 
+subRoutingRules = happ://routing/onadd/eyJOYW1lIjoiUm9zY29tVlBOIFdoaXRlbGlzdCIsIkdsb2JhbFByb3h5IjoidHJ1ZSIsIlJvdXRlT3JkZXIiOiJibG9jay1wcm94eS1kaXJlY3QiLCJSZW1vdGVETlNUeXBlIjoiRG9IIiwiUmVtb3RlRE5TRG9tYWluIjoiaHR0cHM6Ly84LjguOC44L2Rucy1xdWVyeSIsIlJlbW90ZUROU0lQIjoiOC44LjguOCIsIkRvbWVzdGljRE5TVHlwZSI6IkRvSCIsIkRvbWVzdGljRE5TRG9tYWluIjoiaHR0cHM6Ly83Ny44OC44LjgvZG5zLXF1ZXJ5IiwiRG9tZXN0aWNETlNJUCI6Ijc3Ljg4LjguOCIsIkdlb2lwdXJsIjoiaHR0cHM6Ly9jZG4uanNkZWxpdnIubmV0L2doL2h5ZHJhcG9uaXF1ZS9yb3Njb212cG4tZ2VvaXBAMjAyNjA3MjcwNjM...
+subShowIdentityOnAllLinks = false
+subShowInfo = true
+subSupportUrl = 
+subThemeDir = 
+subTitle = TheBestVPN
+subURI = 
+subUpdates = 12
+tgBotEnable = false
+tgEnabledEvents = login.attempt,cpu.high
+trafficDiff = 0
+twoFactorEnable = true
+webBasePath = /xJDLFksdjdlredESF/
+webDomain = 
+webListen = 
+webPort = 5053
+xrayTemplateConfig = {"inbounds":[{"listen":"127.0.0.1","port":62789,"protocol":"tunnel","settings":{"rewriteAddress":"127.0.0.1"},"tag":"api"}],"outbounds":[{"tag":"out-awg0","protocol":"freedom","settings":{"domainStrategy":"UseIPv4"},"streamSettings":{"sockopt":{"interface":"awg0"}}},{"tag":"direct","protocol":"freedom","settings":{"domainStrategy":"AsIs","finalRules":[{"action":"block","ip":["geoip:private"]},{"action":"allow"}]}},{"tag":"blocked","protocol":"blackhole","settings":{}},{"tag":"out-awg-myfinland",...
+
+=== ALL settings keys ===
+datepicker
+expireDiff
+externalTrafficInformEnable
+externalTrafficInformURI
+ldapAutoCreate
+ldapAutoDelete
+ldapBaseDN
+ldapBindDN
+ldapDefaultExpiryDays
+ldapDefaultLimitIP
+ldapDefaultTotalGB
+ldapEnable
+ldapFlagField
+ldapHost
+ldapInboundTags
+ldapInsecureSkipVerify
+ldapInvertFlag
+ldapPassword
+ldapPort
+ldapSyncCron
+ldapTruthyValues
+ldapUseTLS
+ldapUserAttr
+ldapUserFilter
+ldapVlessField
+outboundDownThreshold
+pageSize
+panelGuid
+panelOutbound
+remarkModel
+remarkTemplate
+restartXrayOnClientDisable
+secret
+sessionMaxAge
+smtpCpu
+smtpEnable
+smtpEnabledEvents
+smtpEncryptionType
+smtpFrom
+smtpFromName
+smtpHost
+smtpMemory
+smtpPassword
+smtpPort
+smtpTo
+smtpUsername
+subAnnounce
+subCertFile
+subClashAutoDetect
+subClashEnable
+subClashEnableRouting
+subClashPath
+subClashRules
+subClashURI
+subClashUserAgentRegex
+subDomain
+subEmailInRemark
+subEnable
+subEnableRouting
+subEncrypt
+subHideSettings
+subIncyEnableRouting
+subIncyRoutingRules
+subJsonAlwaysArray
+subJsonAutoDetect
+subJsonEnable
+subJsonFinalMask
+subJsonMux
+subJsonPath
+subJsonRules
+subJsonURI
+subJsonUserAgentRegex
+subKeyFile
+subListen
+subPath
+subPort
+subProfileUrl
+subRoutingRules
+subShowIdentityOnAllLinks
+subShowInfo
+subSupportUrl
+subThemeDir
+subTitle
+subURI
+subUpdates
+tgBotAPIServer
+tgBotBackup
+tgBotChatId
+tgBotEnable
+tgBotLoginNotify
+tgBotProxy
+tgBotToken
+tgCpu
+tgEnabledEvents
+tgLang
+tgMemory
+tgRunTime
+timeLocation
+trafficDiff
+trustedProxyCIDRs
+twoFactorEnable
+twoFactorToken
+warpUpdateInterval
+webBasePath
+webCertFile
+webDomain
+webKeyFile
+webListen
+webPort
+xrayOutboundTestUrl
+xrayTemplateConfig
+
+=== nodes table ===
+cols ['id', 'name', 'remark', 'scheme', 'address', 'port', 'base_path', 'api_token', 'enable', 'allow_private_address', 'tls_verify_mode', 'pinned_cert_sha256', 'guid', 'status', 'last_heartbeat', 'latency_ms', 'xray_version', 'panel_version', 'cpu_pct', 'mem_pct', 'uptime_secs', 'last_error', 'xray_state', 'xray_error', 'config_dirty', 'config_dirty_at', 'created_at', 'updated_at', 'inbound_sync_mode', 'inbound_tags', 'outbound_tag', 'net_up', 'net_down', 'inbounds_adopted_at']
+{'id': 1, 'name': 'nl-niderlands', 'remark': '', 'scheme': 'https', 'address': 'nl.zizmos.ru', 'port': 8934, 'base_path': '/TsqooohL1gwBMd8ttu/', 'api_token': '***', 'enable': 1, 'allow_private_address': 0, 'tls_verify_mode': 'verify', 'pinned_cert_sha256': '', 'guid': 'a9757463-19a6-49d7-8423-0ac2bea52185', 'status': 'online', 'last_heartbeat': 1786015078, 'latency_ms': 48, 'xray_version': '26.6.27', 'panel_version': '3.4.2', 'cpu_pct': 4.82198802238155, 'mem_pct': 45.581006085917885, 'uptime_secs': 3249526, 'last_error': '', 'xray_state': 'running', 'xray_error': '', 'config_dirty': 0, 'config_dirty_at': 1784711836985, 'created_at': 1782766156032, 'updated_at': 1786015078068, 'inbound_sync_mode': 'all', 'inbound_tags': 'null', 'outbound_tag': '', 'net_up': 1864, 'net_down': 1323, 'inbounds_adopted_at': 1784131834}
+{'id': 2, 'name': 'Moscow', 'remark': '', 'scheme': 'https', 'address': 'msc.zizmos.ru', 'port': 57256, 'base_path': '/dXMe0lwWTJaigGdNvz/', 'api_token': '***', 'enable': 1, 'allow_private_address': 0, 'tls_verify_mode': 'verify', 'pinned_cert_sha256': '', 'guid': '914f8e5d-aeb9-41cc-8f99-98c1cc9b5839', 'status': 'online', 'last_heartbeat': 1786015078, 'latency_ms': 19, 'xray_version': '26.7.28', 'panel_version': '3.6.0', 'cpu_pct': 12.380121870986088, 'mem_pct': 51.61049929618283, 'uptime_secs': 1385958, 'last_error': '', 'xray_state': 'running', 'xray_error': '', 'config_dirty': 0, 'config_dirty_at': 1786012067760, 'created_at': 1784571990807, 'updated_at': 1786015078021, 'inbound_sync_mode': 'all', 'inbound_tags': 'null', 'outbound_tag': '', 'net_up': 841, 'net_down': 18154, 'inbounds_adopted_at': 1785108712}
+
+=== inbounds summary ===
+inbound cols ['id', 'user_id', 'up', 'down', 'total', 'remark', 'enable', 'expiry_time', 'traffic_reset', 'last_traffic_reset_time', 'listen', 'port', 'protocol', 'settings', 'stream_settings', 'tag', 'sniffing', 'node_id', 'origin_node_guid', 'sub_sort_index', 'share_addr_strategy', 'share_addr', 'traffic_reset_day']
+{'id': 14, 'remark': '🇷🇺 Selectel - fast', 'protocol': 'hysteria', 'port': 443, 'enable': 0, 'listen': '', 'tag': 'in-443-udp'}
+{'id': 20, 'remark': '[P0] 🇷🇺 Selectel - 1', 'protocol': 'vless', 'port': 37830, 'enable': 1, 'listen': '', 'tag': 'in-37830-tcp'}
+{'id': 27, 'remark': '[P0] 🇷🇺 Selectel - 2', 'protocol': 'vless', 'port': 24146, 'enable': 1, 'listen': '', 'tag': 'in-24146-tcp'}
+{'id': 31, 'remark': '🇳🇱 Nederlands - fast', 'protocol': 'hysteria', 'port': 443, 'enable': 0, 'listen': '', 'tag': 'n1-in-443-udp'}
+{'id': 36, 'remark': '[P5] 🇷🇺 Обход - Yandex', 'protocol': 'vless', 'port': 8003, 'enable': 1, 'listen': '127.0.0.1', 'tag': 'in-8003-tcp'}
+{'id': 43, 'remark': '[P6] 🇷🇺 Обход - VK', 'protocol': 'vless', 'port': 8030, 'enable': 1, 'listen': '127.0.0.1', 'tag': 'in-8030-tcp'}
+{'id': 44, 'remark': '[P15] 🇷🇺 Обход - TimeWeb', 'protocol': 'vless', 'port': 8040, 'enable': 1, 'listen': '127.0.0.1', 'tag': 'in-8040-tcp'}
+{'id': 47, 'remark': '[P0] 🇷🇺 Selectel - flare', 'protocol': 'vless', 'port': 45328, 'enable': 0, 'listen': '127.0.0.1', 'tag': 'in-45328-tcp'}
+{'id': 48, 'remark': '[P0] 🇷🇺 Selectel - 4', 'protocol': 'vless', 'port': 53304, 'enable': 1, 'listen': '', 'tag': 'in-53304-tcp'}
+{'id': 50, 'remark': '[P10] 🇷🇺 Обход - VK 2', 'protocol': 'vless', 'port': 9003, 'enable': 1, 'listen': '127.0.0.1', 'tag': 'in-9003-tcp'}
+{'id': 57, 'remark': '[P1] 🇷🇺 Moscow - 2', 'protocol': 'vless', 'port': 12349, 'enable': 1, 'listen': '', 'tag': 'n2-in-12349-tcp'}
+{'id': 59, 'remark': '[P1] 🇷🇺 Moscow - 1', 'protocol': 'vless', 'port': 443, 'enable': 1, 'listen': '', 'tag': 'n2-in-443-tcp'}
+{'id': 71, 'remark': '[P0] 🇷🇺 Selectel - 3', 'protocol': 'vless', 'port': 27676, 'enable': 0, 'listen': '', 'tag': 'in-27676-tcp'}
+{'id': 72, 'remark': '[P7] 🇷🇺 Обход - Beget CDN', 'protocol': 'vless', 'port': 8050, 'enable': 1, 'listen': '127.0.0.1', 'tag': 'in-8050-tcp'}
+
+=== outbound_subscriptions ===
+cols ['id', 'remark', 'url', 'enabled', 'allow_private', 'tag_prefix', 'update_interval', 'priority', 'prepend', 'last_updated', 'last_error', 'last_fetched_outbounds', 'link_identities', 'created_at', 'updated_at', 'allow_insecure']
+
+=== client_external_links sample ===
+cols ['id', 'client_id', 'kind', 'value', 'remark', 'sort_index', 'created_at']
+count 0
+
+=== hosts ===
+{'id': 6, 'inbound_id': 43, 'sort_order': 0, 'remark': 'White listok', 'server_description': '', 'is_disabled': 0, 'is_hidden': 0, 'tags': None, 'address': 'vkcdn.zizmos.ru', 'port': 443, 'security': 'tls', 'sni': 'vkcdn.zizmos.ru', 'host_header': '', 'path': '', 'alpn': '["h2"]', 'fingerprint': 'firefox', 'override_sni_from_address': 0, 'keep_sni_blank': 0, 'pinned_peer_cert_sha256': '[]', 'verify_peer_cert_by_name': '', 'allow_insecure': 0, 'ech_config_list': '', 'mux_params': '', 'sockopt_params': '', 'final_mask': '', 'vless_route': '', 'exclude_from_sub_types': None, 'mihomo_ip_version': '', 'mihomo_x25519': 0, 'shuffle_host': 0, 'node_guids': None, 'created_at': 1783699721109, 'updated_at': 1784131834349, 'group_id': '8q63cvkhr4e5qkez'}
+{'id': 7, 'inbound_id': 44, 'sort_order': 0, 'remark': 'White listokek', 'server_description': '', 'is_disabled': 0, 'is_hidden': 0, 'tags': None, 'address': '9bkmrh4mts.cdn.twcstorage.ru', 'port': 443, 'security': 'tls', 'sni': '9bkmrh4mts.cdn.twcstorage.ru', 'host_header': '', 'path': '', 'alpn': '["h2"]', 'fingerprint': 'firefox', 'override_sni_from_address': 0, 'keep_sni_blank': 0, 'pinned_peer_cert_sha256': '[]', 'verify_peer_cert_by_name': '', 'allow_insecure': 0, 'ech_config_list': '', 'mux_params': '', 'sockopt_params': '', 'final_mask': '', 'vless_route': '', 'exclude_from_sub_types': None, 'mihomo_ip_version': '', 'mihomo_x25519': 0, 'shuffle_host': 0, 'node_guids': None, 'created_at': 1783773447891, 'updated_at': 1784131834349, 'group_id': 'ifzpmd0g0sko55wa'}
+
+=== client counts ===
+clients 19
+client_traffics 21
+client_inbounds 159
+client_groups 2
+
+=== find sub qk13 ===
+found in inbound 20 [P0] 🇷🇺 Selectel - 1
+ client Petya subId qk13p3uu5farhw5x enable True
+found in inbound 27 [P0] 🇷🇺 Selectel - 2
+ client Petya subId qk13p3uu5farhw5x enable True
+found in inbound 43 [P6] 🇷🇺 Обход - VK
+ client Petya subId qk13p3uu5farhw5x enable True
+found in inbound 44 [P15] 🇷🇺 Обход - TimeWeb
+ client Petya subId qk13p3uu5farhw5x enable True
+found in inbound 48 [P0] 🇷🇺 Selectel - 4
+ client Petya subId qk13p3uu5farhw5x enable True
+found in inbound 57 [P1] 🇷🇺 Moscow - 2
+ client Petya subId qk13p3uu5farhw5x enable True
+found in inbound 59 [P1] 🇷🇺 Moscow - 1
+ client Petya subId qk13p3uu5farhw5x enable True
+found in inbound 71 [P0] 🇷🇺 Selectel - 3
+ client Petya subId qk13p3uu5farhw5x enable True
+found in inbound 72 [P7] 🇷🇺 Обход - Beget CDN
+ client Petya subId qk13p3uu5farhw5x enable True
+clients cols ['id', 'email', 'sub_id', 'uuid', 'password', 'auth', 'flow', 'security', 'reverse', 'limit_ip', 'total_gb', 'expiry_time', 'enable', 'tg_id', 'group_name', 'comment', 'reset', 'created_at', 'updated_at', 'wg_private_key', 'wg_public_key', 'wg_allowed_ips', 'wg_pre_shared_key', 'wg_keep_alive', 'secret', 'ad_tag']
+sample client keys ['id', 'email', 'sub_id', 'uuid', 'password', 'auth', 'flow', 'security', 'reverse', 'limit_ip', 'total_gb', 'expiry_time', 'enable', 'tg_id', 'group_name', 'comment', 'reset', 'created_at', 'updated_at', 'wg_private_key', 'wg_public_key', 'wg_allowed_ips', 'wg_pre_shared_key', 'wg_keep_alive', 'secret', 'ad_tag']
+
+=== x-ui config / sub related files ===
+exists /usr/local/x-ui/bin/config.json 37197
+exists /etc/x-ui/x-ui.db 442368
+total 8288
+drwxr-xr-x   2 root root    4096 Aug  6 11:17 .
+drwxr-xr-x 107 root root   12288 Aug  6 10:35 ..
+-rw-r--r--   1 root root 1386165 Aug  6 11:17 system_metrics.gob
+-rw-r--r--   1 root root      87 Jul 30 10:34 update-status.json
+-rw-r--r--   1 root root  442368 Aug  6 11:16 x-ui.db
+-rw-r--r--   1 root root   32768 Aug  6 11:17 x-ui.db-shm
+-rw-r--r--   1 root root 4202432 Aug  6 11:17 x-ui.db-wal
+-rw-r--r--   1 root root  405504 Aug  1 20:33 x-ui.db.bak.before-remove-rate-limits-20260801T203547
+-rw-r--r--   1 root root  339968 Jul 30 15:02 x-ui.db.bak.before-yandex-realip-20260730T150443Z
+-rw-r--r--   1 root root  303104 Jul 26 23:42 x-ui.db.before-json-finalmask-20260726-234220
+-rw-r--r--   1 root root  339968 Jul 27 08:34 x-ui.db.before-moscow-all-local-decoy-20260727
+-rw-r--r--   1 root root  339968 Jul 27 08:27 x-ui.db.before-moscow1-local-decoy-20260727
+-rw-r--r--   1 root root  335872 Jul 30 14:18 x-ui.db.before-timeweb-realip-20260730
+-rw-r--r--   1 root root  335872 Jul 30 14:27 x-ui.db.before-vk-realip-20260730
+total 67384
+drwxr-xr-x  3 root root     4096 Jul 30 01:19 .
+drwxr-xr-x 11 root root     4096 Jul 30 10:34 ..
+drwxr-xr-x  2 root root     4096 Aug  6 00:07 bin
+-rwxr-xr-x  1 root root 68841232 Jul 30 01:19 x-ui
+-rw-r--r--  1 root root      391 Jul 30 01:19 x-ui.service.arch
+-rw-r--r--  1 root root      392 Jul 30 01:19 x-ui.service.debian
+-rw-r--r--  1 root root      394 Jul 30 01:19 x-ui.service.rhel
+-rwxr-xr-x  1 root root   134792 Jul 30 01:19 x-ui.sh
+
+=== env balancer ===
+UPSTREAM_JSON_BASE=https://sctl.zizmos.ru:5843/jsonic/
+UPSTREAM_VERIFY_TLS=true
+UPSTREAM_TIMEOUT_SECONDS=15
+PROFILE_REMARK=🇷🇺 АВТОВЫБОР
+INCLUDE_PROTOCOLS=vless,hysteria
+MAX_PROFILES=12
+PRIORITY_CONFIG_PATH=/etc/3xui-happ-priorities.json
+
+
+########## NODE 194.67.205.140 ##########
+HOST vds3042250.my-ihor.ru
+IP 194.67.205.140
+
+=== settings (interesting) ===
+externalTrafficInformEnable = false
+externalTrafficInformURI = 
+ldapBaseDN = 
+ldapEnable = false
+ldapPort = 389
+ldapSyncCron = @every 1m
+ldapVlessField = vless_enabled
+panelGuid = 914f8e5d-aeb9-41cc-8f99-98c1cc9b5839
+panelOutbound = 
+remarkTemplate = {{INBOUND}}-{{EMAIL}}|📊{{TRAFFIC_LEFT}}|⏳{{DAYS_LEFT}}D
+secret = ***
+smtpEnable = false
+smtpEnabledEvents = login.attempt,cpu.high
+smtpPort = 587
+subAnnounce = 
+subCertFile = /root/cert/msc.zizmos.ru/fullchain.pem
+subClashEnable = false
+subClashEnableRouting = false
+subClashPath = /clash/
+subClashRules = 
+subClashURI = 
+subDomain = 
+subEnable = true
+subEnableRouting = false
+subEncrypt = true
+subHideSettings = false
+subIncyEnableRouting = false
+subIncyRoutingRules = 
+subJsonEnable = true
+subJsonFinalMask = {"tcp":[{"type":"fragment","settings":{"packets":"tlshello","lengths":["10-30"],"delays":["5-15"],"maxSplit":"3-5"}}],"udp":[]}
+subJsonMux = 
+subJsonPath = /jesonic/
+subJsonRules = 
+subJsonURI = 
+subKeyFile = ***
+subListen = 
+subPath = /eikdsvj/
+subPort = 8362
+subProfileUrl = 
+subRoutingRules = 
+subSupportUrl = 
+subThemeDir = 
+subTitle = 
+subURI = 
+subUpdates = 12
+tgBotEnable = false
+tgEnabledEvents = login.attempt,cpu.high
+trafficDiff = 0
+twoFactorEnable = false
+webBasePath = /dXMe0lwWTJaigGdNvz/
+webDomain = 
+webListen = 
+webPort = 57256
+xrayTemplateConfig = {
+  "api": {
+    "services": [
+      "HandlerService",
+      "LoggerService",
+      "StatsService",
+      "RoutingService"
+    ],
+    "tag": "api"
+  },
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 62789,
+      "protocol": "tunnel",
+      "settings": {
+        "rewriteAddress": "127.0.0.1"
+      },
+      "tag": "api"
+    }
+  ],
+  "log": {
+    "access": "./access.log",
+    "dnsLog": true,
+    "error": "./error.log",
+    "loglevel": "debug",
+    "maskAddress": ""
+  },
+  "metrics...
+
+=== ALL settings keys ===
+datepicker
+expireDiff
+externalTrafficInformEnable
+externalTrafficInformURI
+ldapAutoCreate
+ldapAutoDelete
+ldapBaseDN
+ldapBindDN
+ldapDefaultExpiryDays
+ldapDefaultLimitIP
+ldapDefaultTotalGB
+ldapEnable
+ldapFlagField
+ldapHost
+ldapInboundTags
+ldapInsecureSkipVerify
+ldapInvertFlag
+ldapPassword
+ldapPort
+ldapSyncCron
+ldapTruthyValues
+ldapUseTLS
+ldapUserAttr
+ldapUserFilter
+ldapVlessField
+pageSize
+panelGuid
+panelOutbound
+remarkTemplate
+restartXrayOnClientDisable
+secret
+sessionMaxAge
+smtpCpu
+smtpEnable
+smtpEnabledEvents
+smtpEncryptionType
+smtpHost
+smtpMemory
+smtpPassword
+smtpPort
+smtpTo
+smtpUsername
+subAnnounce
+subCertFile
+subClashEnable
+subClashEnableRouting
+subClashPath
+subClashRules
+subClashURI
+subDomain
+subEnable
+subEnableRouting
+subEncrypt
+subHideSettings
+subIncyEnableRouting
+subIncyRoutingRules
+subJsonEnable
+subJsonFinalMask
+subJsonMux
+subJsonPath
+subJsonRules
+subJsonURI
+subKeyFile
+subListen
+subPath
+subPort
+subProfileUrl
+subRoutingRules
+subSupportUrl
+subThemeDir
+subTitle
+subURI
+subUpdates
+tgBotAPIServer
+tgBotBackup
+tgBotChatId
+tgBotEnable
+tgBotProxy
+tgBotToken
+tgCpu
+tgEnabledEvents
+tgLang
+tgMemory
+tgRunTime
+timeLocation
+trafficDiff
+trustedProxyCIDRs
+twoFactorEnable
+twoFactorToken
+warpUpdateInterval
+webBasePath
+webCertFile
+webDomain
+webKeyFile
+webListen
+webPort
+xrayOutboundTestUrl
+xrayTemplateConfig
+
+=== nodes table ===
+cols ['id', 'name', 'remark', 'scheme', 'address', 'port', 'base_path', 'api_token', 'enable', 'allow_private_address', 'tls_verify_mode', 'pinned_cert_sha256', 'inbound_sync_mode', 'inbound_tags', 'outbound_tag', 'guid', 'status', 'last_heartbeat', 'latency_ms', 'xray_version', 'panel_version', 'cpu_pct', 'mem_pct', 'uptime_secs', 'net_up', 'net_down', 'last_error', 'xray_state', 'xray_error', 'config_dirty', 'config_dirty_at', 'created_at', 'updated_at', 'inbounds_adopted_at']
+
+=== inbounds summary ===
+inbound cols ['id', 'user_id', 'up', 'down', 'total', 'remark', 'sub_sort_index', 'enable', 'expiry_time', 'traffic_reset', 'last_traffic_reset_time', 'listen', 'port', 'protocol', 'settings', 'stream_settings', 'tag', 'sniffing', 'node_id', 'share_addr_strategy', 'share_addr', 'origin_node_guid', 'traffic_reset_day']
+{'id': 7, 'remark': '[P1] 🇷🇺 Moscow - 2', 'protocol': 'vless', 'port': 12349, 'enable': 1, 'listen': '', 'tag': 'in-12349-tcp'}
+{'id': 9, 'remark': '[P10] 🇷🇺 Обход - VK 2', 'protocol': 'vless', 'port': 9003, 'enable': 1, 'listen': '127.0.0.1', 'tag': 'in-9003-tcp'}
+{'id': 10, 'remark': '[P1] 🇷🇺 Moscow - 1', 'protocol': 'vless', 'port': 443, 'enable': 1, 'listen': '', 'tag': 'in-443-tcp'}
+
+=== outbound_subscriptions ===
+cols ['id', 'remark', 'url', 'enabled', 'allow_private', 'tag_prefix', 'update_interval', 'priority', 'prepend', 'last_updated', 'last_error', 'last_fetched_outbounds', 'link_identities', 'created_at', 'updated_at', 'allow_insecure']
+
+=== client_external_links sample ===
+cols ['id', 'client_id', 'kind', 'value', 'remark', 'sort_index', 'created_at']
+count 0
+
+=== hosts ===
+{'id': 4, 'inbound_id': 9, 'sort_order': 0, 'remark': 'VK CDN', 'server_description': '', 'is_disabled': 0, 'is_hidden': 0, 'tags': None, 'address': 'vcdn.zizmos.ru', 'port': 443, 'security': 'tls', 'sni': 'vcdn.zizmos.ru', 'host_header': '', 'path': '', 'alpn': '["h2"]', 'fingerprint': 'firefox', 'override_sni_from_address': 0, 'keep_sni_blank': 0, 'pinned_peer_cert_sha256': '[]', 'verify_peer_cert_by_name': '', 'allow_insecure': 0, 'ech_config_list': '', 'mux_params': '', 'sockopt_params': '', 'final_mask': '', 'vless_route': '', 'exclude_from_sub_types': None, 'mihomo_ip_version': '', 'mihomo_x25519': 0, 'shuffle_host': 0, 'node_guids': None, 'created_at': 1785108712068, 'updated_at': 1786014839802, 'group_id': 'oo53t9pc7g6zn57d'}
+
+=== client counts ===
+clients 18
+client_traffics 17
+client_inbounds 34
+client_groups 0
+
+=== find sub qk13 ===
+found in inbound 7 [P1] 🇷🇺 Moscow - 2
+ client Petya subId qk13p3uu5farhw5x enable True
+found in inbound 10 [P1] 🇷🇺 Moscow - 1
+ client Petya subId qk13p3uu5farhw5x enable True
+clients cols ['id', 'email', 'sub_id', 'uuid', 'password', 'auth', 'flow', 'security', 'reverse', 'wg_private_key', 'wg_public_key', 'wg_allowed_ips', 'wg_pre_shared_key', 'wg_keep_alive', 'limit_ip', 'total_gb', 'expiry_time', 'enable', 'tg_id', 'group_name', 'comment', 'reset', 'created_at', 'updated_at', 'secret', 'ad_tag']
+sample client keys ['id', 'email', 'sub_id', 'uuid', 'password', 'auth', 'flow', 'security', 'reverse', 'wg_private_key', 'wg_public_key', 'wg_allowed_ips', 'wg_pre_shared_key', 'wg_keep_alive', 'limit_ip', 'total_gb', 'expiry_time', 'enable', 'tg_id', 'group_name', 'comment', 'reset', 'created_at', 'updated_at', 'secret', 'ad_tag']
+
+=== x-ui config / sub related files ===
+exists /usr/local/x-ui/bin/config.json 10574
+exists /etc/x-ui/x-ui.db 294912
+total 6940
+drwxr-xr-x   2 root root    4096 Aug  6 11:18 .
+drwxr-xr-x 122 root root   12288 Aug  3 18:59 ..
+-rw-------   1 root root     251 Jul 21 10:21 install-result.env
+-rw-r--r--   1 root root 1417924 Aug  6 11:18 system_metrics.gob
+-rw-r--r--   1 root root      69 Aug  6 11:14 update-status.json
+-rw-r--r--   1 root root  294912 Aug  6 11:13 x-ui.db
+-rw-r--r--   1 root root   32768 Aug  6 11:17 x-ui.db-shm
+-rw-r--r--   1 root root  828152 Aug  6 11:17 x-ui.db-wal
+-rw-r--r--   1 root root  233472 Jul 26 22:00 x-ui.db.bak.before-awg1-force-ipv4-20260726T220024Z
+-rw-r--r--   1 root root  233472 Jul 26 21:16 x-ui.db.bak.before-finalize-reality443-20260726T211954Z
+-rw-r--r--   1 root root  233472 Jul 26 21:16 x-ui.db.bak.before-finalize-reality443-20260726T212047Z
+-rw-r--r--   1 root root  233472 Jul 26 21:16 x-ui.db.bak.before-finalize-reality443-20260726T212157Z
+-rw-r--r--   1 root root  233472 Jul 26 21:16 x-ui.db.bak.before-finalize-reality443-20260726T212312Z
+-rw-r--r--   1 root root  233472 Jul 26 21:16 x-ui.db.bak.before-finalize-reality443-20260726T212359Z
+-rw-r--r--   1 root root  233472 Jul 26 21:33 x-ui.db.bak.before-finalmask-crash-fix-20260726T213828Z
+-rw-r--r--   1 root root  229376 Jul 26 21:11 x-ui.db.bak.before-reality443-20260726T211211Z
+-rw-r--r--   1 root root  229376 Jul 26 21:14 x-ui.db.bak.before-reality443-20260726T211522Z
+-rw-r--r--   1 root root  229376 Jul 26 21:14 x-ui.db.bak.before-reality443-20260726T211639Z
+-rw-r--r--   1 root root  233472 Jul 26 21:16 x-ui.db.bak.before-reality443-20260726T211831Z
+-rw-r--r--   1 root root  233472 Jul 26 21:31 x-ui.db.bak.before-reality443-flow-fix-20260726T213223Z
+-rw-r--r--   1 root root  233472 Jul 26 23:26 x-ui.db.before-awg-balancer-20260726-232659
+-rw-r--r--   1 root root  294912 Jul 27 08:33 x-ui.db.before-awg2-only-20260727
+-rw-r--r--   1 root root  294912 Jul 27 08:34 x-ui.db.before-moscow-all-local-decoy-20260727
+-rw-r--r--   1 root root  294912 Jul 27 08:28 x-ui.db.before-moscow1-local-decoy-20260727
+-rw-r--r--   1 root root  294912 Jul 27 07:12 x-ui.db.before-remove-circular-node-20260727-071223
+-rw-r--r--   1 root root  294912 Jul 27 07:13 x-ui.db.before-remove-circular-node-20260727-071348
+total 67388
+drwxr-xr-x  3 root root     4096 Jul 30 01:19 .
+drwxr-xr-x 12 root root     4096 Aug  6 11:13 ..
+drwxr-xr-x  2 root root     4096 Aug  6 11:14 bin
+-rwxr-xr-x  1 root root 68841232 Jul 30 01:19 x-ui
+-rw-r--r--  1 root root      391 Jul 30 01:19 x-ui.service.arch
+-rw-r--r--  1 root root      392 Jul 30 01:19 x-ui.service.debian
+-rw-r--r--  1 root root      394 Jul 30 01:19 x-ui.service.rhel
+-rwxr-xr-x  1 root root   134792 Jul 30 01:19 x-ui.sh
+
+=== env balancer ===
+UPSTREAM_JSON_BASE=https://msc.zizmos.ru:8362/jesonic/
+UPSTREAM_VERIFY_TLS=true
+UPSTREAM_TIMEOUT_SECONDS=15
+PROFILE_REMARK=🇷🇺 АВТОВЫБОР
+INCLUDE_PROTOCOLS=vless,hysteria
+MAX_PROFILES=12
+PRIORITY_CONFIG_PATH=/etc/3xui-happ-priorities.json

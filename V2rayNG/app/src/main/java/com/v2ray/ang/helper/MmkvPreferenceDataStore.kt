@@ -5,6 +5,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsChangeManager
 import com.v2ray.ang.handler.SettingsManager
+import com.v2ray.ang.util.FailureLogRecorder
 import com.v2ray.ang.util.LogUtil
 
 /**
@@ -76,6 +77,13 @@ class MmkvPreferenceDataStore : PreferenceDataStore() {
     private fun notifySettingChanged(key: String) {
         if (key == AppConfig.PREF_LOGLEVEL) {
             LogUtil.refreshLogLevel()
+        }
+        if (key == AppConfig.PREF_FAILURE_LOG_ENABLED) {
+            FailureLogRecorder.refreshEnabled()
+            return
+        }
+        if (key == AppConfig.PREF_FAILURE_LOG_VIEW || key == AppConfig.PREF_CONNECTION_JOURNAL) {
+            return
         }
 
         // Call SettingsManager.setNightMode if UI mode changed

@@ -33,11 +33,24 @@ object AppConfig {
     const val PREF_VPN_BYPASS_LAN = "pref_vpn_bypass_lan"
     const val PREF_VPN_INTERFACE_ADDRESS_CONFIG_INDEX = "pref_vpn_interface_address_config_index"
     const val PREF_VPN_MTU = "pref_vpn_mtu"
+    /** Master switch: when false, always use built-in default MTU (ignores manual/adaptive). */
+    const val PREF_CUSTOM_MTU_ENABLED = "pref_custom_mtu_enabled"
     const val PREF_ADAPTIVE_MTU_ENABLED = "pref_adaptive_mtu_enabled"
+    /** Persisted path-probed TUN MTU for Wi‑Fi (used only when adaptive MTU is on). */
+    const val PREF_ADAPTIVE_MTU_WIFI = "pref_adaptive_mtu_wifi"
+    /** Persisted path-probed TUN MTU for cellular (used only when adaptive MTU is on). */
+    const val PREF_ADAPTIVE_MTU_CELLULAR = "pref_adaptive_mtu_cellular"
+    const val PREF_PROBE_MTU_WIFI = "pref_probe_mtu_wifi"
+    const val PREF_PROBE_MTU_CELLULAR = "pref_probe_mtu_cellular"
     const val PREF_NOTIFICATION_SHOW_MTU = "pref_notification_show_mtu"
     const val PREF_NOTIFICATION_SHOW_ACTIVE_OUTBOUND = "pref_notification_show_active_outbound"
+    const val PREF_NOTIFICATION_SHOW_ROUTING_MODE = "pref_notification_show_routing_mode"
+    const val PREF_NOTIFICATION_SHOW_BATTERY_USAGE = "pref_notification_show_battery_usage"
     const val PREF_CONNECTION_DIAGNOSTICS_ENABLED = "pref_connection_diagnostics_enabled"
     const val PREF_CONNECTION_JOURNAL = "pref_connection_journal"
+    /** Opt-in sparse failure breadcrumbs (off by default; low battery cost). */
+    const val PREF_FAILURE_LOG_ENABLED = "pref_failure_log_enabled"
+    const val PREF_FAILURE_LOG_VIEW = "pref_failure_log_view"
     const val PREF_ROUTING_DOMAIN_STRATEGY = "pref_routing_domain_strategy"
     const val PREF_ROUTING_RULESET = "pref_routing_ruleset"
     const val PREF_MUX_ENABLED = "pref_mux_enabled"
@@ -53,13 +66,16 @@ object AppConfig {
     const val APP_UPDATE_TASK_NAME = "zimavpn_app_update_v1"
     const val GEO_BOOTSTRAP_TASK_NAME = "zima_geo_bootstrap_v5"
     const val SUBSCRIPTION_MIN_INTERVAL_MINUTES = 15L
-    const val PREF_SPEED_ENABLED = "pref_speed_enabled"
+    /** Refresh all subscriptions every 6 hours while VPN/core is running in background. */
+    const val SUBSCRIPTION_VPN_BACKGROUND_INTERVAL_MS = 6 * 60 * 60 * 1000L
+    const val PREF_LAST_VPN_SUB_REFRESH_AT = "pref_last_vpn_sub_refresh_at"
     const val PREF_CONFIRM_REMOVE = "pref_confirm_remove"
     const val PREF_START_SCAN_IMMEDIATE = "pref_start_scan_immediate"
     const val PREF_DOUBLE_COLUMN_DISPLAY = "pref_double_column_display"
     const val PREF_GROUP_ALL_DISPLAY = "pref_group_all_display"
     const val PREF_LANGUAGE = "pref_language"
     const val PREF_UI_MODE_NIGHT = "pref_ui_mode_night"
+    const val PREF_UI_WINTER_ANIMATIONS = "pref_ui_winter_animations"
     const val PREF_IPV6_ENABLED = "pref_ipv6_enabled"
     const val PREF_PREFER_IPV6 = "pref_prefer_ipv6"
     const val PREF_PROXY_SHARING = "pref_proxy_sharing_enabled"
@@ -73,6 +89,11 @@ object AppConfig {
     const val PREF_DOMESTIC_DNS = "pref_domestic_dns"
     const val PREF_DNS_HOSTS = "pref_dns_hosts"
     const val PREF_DELAY_TEST_URL = "pref_delay_test_url"
+    const val PREF_PRIORITY_PROBE_INTERVALS = "pref_priority_probe_intervals"
+    const val PREF_PRIORITY_PROBE_SCREEN_ON_SECONDS = "pref_priority_probe_screen_on_seconds"
+    const val PREF_PRIORITY_PROBE_SCREEN_OFF_SECONDS = "pref_priority_probe_screen_off_seconds"
+    const val DEFAULT_PRIORITY_PROBE_SCREEN_ON_SECONDS = 15L
+    const val DEFAULT_PRIORITY_PROBE_SCREEN_OFF_SECONDS = 5 * 60L
     const val PREF_IP_API_URL = "pref_ip_api_url"
     const val PREF_LOGLEVEL = "pref_core_loglevel"
     const val PREF_OUTBOUND_DOMAIN_RESOLVE_METHOD = "pref_outbound_domain_resolve_method"
@@ -84,15 +105,19 @@ object AppConfig {
     const val PREF_GEO_FILES_SOURCES = "pref_geo_files_sources"
     const val PREF_GEO_BOOTSTRAP_COMPLETE = "pref_zima_geo_bootstrap_complete_v5"
     const val PREF_BUNDLED_GEO_REVISION = "pref_zima_bundled_geo_revision"
-    const val PREF_USE_HEV_TUNNEL = "pref_use_hev_tunnel_v2"
+    // Hev TUN is always forced on. The preference key remains for storage
+    // compatibility, but the toggle is hidden from Settings.
+    const val PREF_USE_HEV_TUNNEL = "pref_use_hev_tunnel_v3"
     const val PREF_HEV_TUNNEL_LOGLEVEL = "pref_hev_tunnel_loglevel"
     const val PREF_HEV_TUNNEL_RW_TIMEOUT = "pref_hev_tunnel_rw_timeout_v2"
+    const val PREF_RESET_SETTINGS = "pref_reset_settings"
     const val PREF_AUTO_REMOVE_INVALID_AFTER_TEST = "pref_auto_remove_invalid_after_test"
     const val PREF_AUTO_SORT_AFTER_TEST = "pref_auto_sort_after_test"
     const val PREF_REAL_PING_CONCURRENCY = "pref_real_ping_concurrency"
 
     /** Cache keys. */
     const val CACHE_SUBSCRIPTION_ID = "cache_subscription_id"
+    /** Active subscription auto-switch session (shared UI ↔ VPN daemon process via MMKV). */
 
     /** Protocol identifiers. */
     const val PROTOCOL_FREEDOM = "freedom"
@@ -135,11 +160,17 @@ object AppConfig {
     const val APP_PRIVACY_POLICY = "$GITHUB_RAW_URL/2dust/v2rayNG/master/CR.md"
     const val APP_PROMOTION_URL = "aHR0cHM6Ly85LjIzNDQ1Ni54eXovYWJjLmh0bWw="
     const val TG_CHANNEL_URL = "https://t.me/github_2dust"
-    const val DELAY_TEST_URL = "https://www.gstatic.com/generate_204"
-    const val DELAY_TEST_URL2 = "https://www.google.com/generate_204"
+    /** Foreign connectivity probes (Cloudflare / Google) — used while VPN is on. */
+    const val DELAY_TEST_URL = "https://cp.cloudflare.com/generate_204"
+    const val DELAY_TEST_URL2 = "https://www.gstatic.com/generate_204"
 
-    //    const val IP_API_URL = "https://speed.cloudflare.com/meta"
-    const val IP_API_URL = "https://api.ip.sb/geoip"
+    /** Foreign IP/geo API — must work through the local HTTP proxy while VPN is on. */
+    const val IP_API_URL = "https://ipwho.is/"
+    val IP_API_URL_FALLBACKS = listOf(
+        "https://ifconfig.co/json",
+        "https://ipinfo.io/json"
+    )
+    const val IP_API_URL_LEGACY = "https://api.ip.sb/geoip"
 
     /** DNS server addresses. */
     const val DNS_PROXY = "https://cloudflare-dns.com/dns-query"
@@ -201,6 +232,7 @@ object AppConfig {
     const val MSG_MEASURE_CONFIG_SUCCESS = 72
     const val MSG_MEASURE_CONFIG_NOTIFY = 73
     const val MSG_MEASURE_CONFIG_FINISH = 74
+    const val MSG_BATTERY_STATS_SETTING_CHANGED = 81
 
     /** Notification channel IDs and names. */
     const val RAY_NG_CHANNEL_ID = "ZIMAVPN_VPN_SERVICE_V4"

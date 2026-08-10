@@ -14,15 +14,22 @@
             android:id="@+id/animation_snow"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:alpha="0.7"
+            android:alpha="0.4"
             android:importantForAccessibility="no"
             android:layout_gravity="center"
-            android:scaleX="1.3"
-            android:scaleY="1.12"
+            android:scaleX="1.15"
+            android:scaleY="1.08"
             android:scaleType="centerCrop"
             android:visibility="gone"
             app:lottie_loop="true"
             app:lottie_rawRes="@raw/snow" />
+
+        <com.v2ray.ang.ui.widget.FrostOverlayView
+            android:id="@+id/frost_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:importantForAccessibility="no"
+            android:visibility="invisible" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -30,166 +37,261 @@
             android:fitsSystemWindows="true"
             android:orientation="vertical">
 
-        <com.google.android.material.appbar.AppBarLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@android:color/transparent"
-            app:elevation="0dp">
-            <androidx.appcompat.widget.Toolbar
-                android:id="@+id/toolbar"
-                android:layout_width="match_parent"
-                android:layout_height="?attr/actionBarSize"
-                app:titleTextColor="#FFFFFF" />
-        </com.google.android.material.appbar.AppBarLayout>
-
-        <com.google.android.material.progressindicator.LinearProgressIndicator
-            android:id="@+id/progress_bar"
-            android:layout_width="match_parent"
-            android:layout_height="3dp"
-            android:indeterminate="true"
-            android:visibility="invisible"
-            app:indicatorColor="#00F5D4" />
-
-        <TextView
-            android:id="@+id/tv_geo_update_status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#CC101027"
-            android:gravity="center"
-            android:minHeight="30dp"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:textColor="#E6FFFFFF"
-            android:textSize="12sp"
-            android:visibility="gone" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_horizontal"
-            android:orientation="vertical"
-            android:paddingStart="24dp"
-            android:paddingEnd="24dp"
-            android:paddingTop="12dp"
-            android:paddingBottom="16dp">
-
-            <FrameLayout
-                android:id="@+id/fab"
-                android:layout_width="150dp"
-                android:layout_height="150dp"
-                android:layout_marginTop="28dp"
-                android:background="@drawable/bg_power_btn_inactive"
-                android:clickable="true"
-                android:focusable="true"
-                android:elevation="8dp">
-
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:gravity="center"
-                    android:orientation="vertical">
-
-                    <ImageView
-                        android:id="@+id/iv_fab_icon"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:src="@drawable/ic_play_24dp"
-                        android:contentDescription="@string/tasker_start_service"
-                        app:tint="#FFFFFF" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:fontFamily="sans-serif-medium"
-                        android:text="START SERVICE"
-                        android:textColor="#FFFFFF"
-                        android:textSize="11sp"
-                        android:letterSpacing="0.05" />
-                </LinearLayout>
-            </FrameLayout>
-
-            <TextView
-                android:id="@+id/tv_selected_profile"
+            <com.google.android.material.appbar.AppBarLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:ellipsize="end"
-                android:fontFamily="sans-serif-medium"
-                android:gravity="center"
-                android:maxLines="1"
-                android:text="@string/zeus_no_profile"
-                android:textColor="#FFFFFF"
-                android:textSize="18sp" />
-
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/layout_test"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:clickable="true"
-                android:focusable="true"
-                app:cardBackgroundColor="#15FFFFFF"
-                app:cardCornerRadius="20dp"
-                app:cardElevation="0dp"
-                app:strokeColor="#20FFFFFF"
-                app:strokeWidth="1dp">
-                <TextView
-                    android:id="@+id/tv_test_state"
+                android:background="@android:color/transparent"
+                app:elevation="0dp">
+                <androidx.appcompat.widget.Toolbar
+                    android:id="@+id/toolbar"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center"
-                    android:minHeight="48dp"
-                    android:padding="12dp"
-                    android:fontFamily="sans-serif"
-                    android:text="@string/connection_test_pending"
-                    android:textColor="#B3FFFFFF"
-                    android:textSize="13sp" />
-            </com.google.android.material.card.MaterialCardView>
+                    android:layout_height="?attr/actionBarSize"
+                    app:titleTextColor="#FFFFFF" />
+            </com.google.android.material.appbar.AppBarLayout>
 
-        </LinearLayout>
-
-        <!-- Заголовок подписок -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="bottom"
-            android:orientation="horizontal"
-            android:paddingStart="24dp"
-            android:paddingTop="8dp"
-            android:paddingEnd="24dp"
-            android:paddingBottom="8dp">
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:fontFamily="sans-serif-black"
-                android:text="@string/zeus_profiles_title"
-                android:textColor="#FFFFFF"
-                android:textSize="20sp" />
-            <TextView
+            <LinearLayout
+                android:id="@+id/animation_toggle_bar"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="sans-serif"
-                android:text="@string/zeus_choose_profile"
-                android:textColor="#80FFFFFF"
-                android:textSize="12sp"
-                android:layout_marginBottom="2dp" />
-        </LinearLayout>
+                android:layout_gravity="end"
+                android:layout_marginTop="-4dp"
+                android:layout_marginEnd="10dp"
+                android:layout_marginBottom="2dp"
+                android:background="@drawable/bg_animation_toggle"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="12dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="6dp"
+                android:paddingBottom="4dp">
 
-        <!-- Вертикальные раскрывающиеся карточки подписок -->
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/subscription_cards"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:clipToPadding="false"
-            android:paddingStart="16dp"
-            android:paddingTop="4dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="24dp"
-            android:scrollbars="vertical" />
+                <TextView
+                    android:id="@+id/tv_animations_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:clickable="false"
+                    android:duplicateParentState="true"
+                    android:focusable="false"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="@string/title_ui_animations"
+                    android:textColor="#E6FFFFFF"
+                    android:textSize="11sp" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switch_animations"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:clickable="false"
+                    android:contentDescription="@string/title_ui_animations"
+                    android:focusable="false"
+                    android:scaleX="0.92"
+                    android:scaleY="0.92"
+                    app:theme="@style/BrandedSwitch" />
+            </LinearLayout>
+
+            <com.google.android.material.progressindicator.LinearProgressIndicator
+                android:id="@+id/progress_bar"
+                android:layout_width="match_parent"
+                android:layout_height="3dp"
+                android:indeterminate="true"
+                android:visibility="invisible"
+                app:indicatorColor="#00F5D4" />
+
+            <TextView
+                android:id="@+id/tv_geo_update_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="#CC101027"
+                android:gravity="center"
+                android:minHeight="30dp"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:textColor="#E6FFFFFF"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:paddingStart="24dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="24dp"
+                android:paddingBottom="12dp">
+
+                <FrameLayout
+                    android:layout_width="200dp"
+                    android:layout_height="200dp"
+                    android:layout_marginTop="8dp">
+
+                    <View
+                        android:id="@+id/power_glow"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:alpha="0"
+                        android:background="@drawable/bg_power_glow"
+                        android:importantForAccessibility="no" />
+
+                    <FrameLayout
+                        android:id="@+id/fab"
+                        android:layout_width="156dp"
+                        android:layout_height="156dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/bg_power_btn_inactive"
+                        android:clickable="true"
+                        android:contentDescription="@string/tasker_start_service"
+                        android:elevation="12dp"
+                        android:focusable="true">
+
+                        <ImageView
+                            android:id="@+id/power_loading_ring"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:alpha="0"
+                            android:contentDescription="@null"
+                            android:padding="3dp"
+                            android:src="@drawable/bg_power_loading_ring"
+                            android:visibility="invisible" />
+
+                        <FrameLayout
+                            android:id="@+id/power_btn_content"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:padding="8dp">
+
+                            <ImageView
+                                android:id="@+id/iv_fab_icon"
+                                android:layout_width="64dp"
+                                android:layout_height="64dp"
+                                android:contentDescription="@string/tasker_start_service"
+                                android:src="@drawable/ic_power_24dp"
+                                app:tint="#FFFFFF" />
+                        </FrameLayout>
+                    </FrameLayout>
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/tv_selected_profile"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:maxLines="1"
+                    android:text="@string/zeus_no_profile"
+                    android:textColor="#FFFFFF"
+                    android:textSize="17sp" />
+
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/layout_test"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:cardBackgroundColor="@android:color/transparent"
+                    app:cardCornerRadius="22dp"
+                    app:cardElevation="0dp"
+                    app:strokeWidth="0dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_test_card"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="16dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="16dp"
+                        android:paddingBottom="12dp">
+
+                        <ImageView
+                            android:id="@+id/iv_test_icon"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:background="@drawable/bg_status_chip"
+                            android:contentDescription="@null"
+                            android:padding="8dp"
+                            android:src="@drawable/ic_public_24dp"
+                            app:tint="#00F5D4" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:id="@+id/tv_test_title"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="sans-serif-medium"
+                                android:text="@string/connection_test_title"
+                                android:textColor="#E6FFFFFF"
+                                android:textSize="13sp" />
+
+                            <TextView
+                                android:id="@+id/tv_test_state"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:fontFamily="sans-serif"
+                                android:text="@string/connection_not_connected"
+                                android:textColor="#99FFFFFF"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="bottom"
+                android:orientation="horizontal"
+                android:paddingStart="24dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="24dp"
+                android:paddingBottom="8dp">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:fontFamily="sans-serif-black"
+                    android:text="@string/zeus_profiles_title"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="2dp"
+                    android:fontFamily="sans-serif"
+                    android:text="@string/zeus_choose_profile"
+                    android:textColor="#80FFFFFF"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/subscription_cards"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:paddingStart="16dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="24dp"
+                android:scrollbars="vertical" />
         </LinearLayout>
     </FrameLayout>
 

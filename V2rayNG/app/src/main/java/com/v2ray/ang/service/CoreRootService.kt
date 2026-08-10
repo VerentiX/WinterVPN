@@ -17,7 +17,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import java.lang.ref.SoftReference
 
 /**
  * Foreground service for the root (system-wide) run modes. Unlike [CoreVpnService] it
@@ -35,7 +34,7 @@ class CoreRootService : Service(), ServiceControl {
     override fun onCreate() {
         super.onCreate()
         LogUtil.i(AppConfig.TAG, "StartCore-Root: Service created")
-        CoreServiceManager.serviceControl = SoftReference(this)
+        CoreServiceManager.bindServiceControl(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -71,9 +70,12 @@ class CoreRootService : Service(), ServiceControl {
         // to a dead listener. Synchronous on purpose — leaving rules behind breaks the net.
         RootProxyManager.stop(this)
         CoreServiceManager.stopCoreLoop()
+        CoreServiceManager.unbindServiceControl(this)
     }
 
     override fun getService(): Service = this
+
+    override fun isServiceActive(): Boolean = CoreServiceManager.isRunning()
 
     override fun startService() {
         // do nothing
@@ -83,13 +85,22 @@ class CoreRootService : Service(), ServiceControl {
         stopSelf()
     }
 
-    override fun reloadService(force: Boolean) {
-        CoroutineScope(Dispatchers.IO).launch {
+    override fun reloadService(force: Boolean): Boolean {
+        val job = CoroutineScope(Dispatchers.IO).launch {
             CoreServiceManager.reloadCoreLoop(null)
         }
+        return !job.isCancelled
+    }
+
+    override fun recoverStalledReload(): Boolean {
+        return reloadService(force = true)
     }
 
     override fun vpnProtect(socket: Int): Boolean = true
+
+    override fun requestTunRecreate() {
+        // Root mode has no Android VpnService TUN MTU to recreate.
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 

@@ -21,6 +21,11 @@ import java.util.concurrent.TimeUnit
 
 object HttpUtil {
 
+    data class UrlContentResponse(
+        val content: String,
+        val headers: Map<String, String>,
+    )
+
     /**
      * Converts the domain part of a URL string to its IDN (Punycode, ASCII Compatible Encoding) format.
      *
@@ -145,6 +150,12 @@ object HttpUtil {
      */
     @Throws(IOException::class)
     fun getUrlContentWithUserAgent(request: UrlContentRequest): String {
+        return getUrlContentResponseWithUserAgent(request).content
+    }
+
+    /** Fetches subscription content together with final-response metadata headers. */
+    @Throws(IOException::class)
+    fun getUrlContentResponseWithUserAgent(request: UrlContentRequest): UrlContentResponse {
         var currentUrl = request.url
         var redirects = 0
         val maxRedirects = 3
@@ -153,7 +164,7 @@ object HttpUtil {
             if (currentUrl == null) continue
             val client = buildOkHttpClient(request.timeout, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = false)
             val finalUserAgent = if (request.userAgent.isNullOrBlank()) {
-                "ZimaVPN/${BuildConfig.VERSION_NAME}"
+                "Winter-Mobile/${BuildConfig.VERSION_NAME}"
             } else {
                 request.userAgent
             }
@@ -185,7 +196,12 @@ object HttpUtil {
                     }
 
                     response.isSuccessful -> {
-                        return response.body?.string() ?: ""
+                        return UrlContentResponse(
+                            content = response.body?.string() ?: "",
+                            headers = response.headers.names().associateWith { name ->
+                                response.header(name).orEmpty()
+                            }
+                        )
                     }
 
                     else -> {

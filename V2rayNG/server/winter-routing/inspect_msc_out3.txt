@@ -1,0 +1,22 @@
+size 5935 head b'[\n  {\n    "dns": {\n      "queryStrategy": "UseIP",\n      "servers": [\n        {\n'
+type <class 'list'> len 2
+--- item 0 dict
+{"dns": {"queryStrategy": "UseIP", "servers": [{"address": "8.8.8.8", "skipFallback": false}], "tag": "dns_out"}, "inbounds": [{"port": 10808, "protocol": "mixed", "settings": {"auth": "noauth", "udp": true, "userLevel": 8}, "sniffing": {"destOverride": ["http", "tls", "quic", "fakedns"], "enabled": true}, "tag": "mixed"}, {"port": 10809, "protocol": "http", "settings": {"userLevel": 8}, "tag": "http"}], "log": {"loglevel": "warning"}, "outbounds": [{"protocol": "vless", "tag": "proxy", "streamSettings": {"finalmask": {"tcp": [{"settings": {"delays": ["5-15"], "lengths": ["10-30"], "maxSplit": "3-5", "packets": "tlshello"}, "type": "fragment"}]}, "network": "tcp", "realitySettings": {"fingerprint": "chrome", "mldsa65Verify": "", "publicKey": "xULTg0Iu31pXXYOZTKCdS6kisCIo4rjRE_Luq9RF-AA", "
+--- item 1 dict
+{"dns": {"queryStrategy": "UseIP", "servers": [{"address": "8.8.8.8", "skipFallback": false}], "tag": "dns_out"}, "inbounds": [{"port": 10808, "protocol": "mixed", "settings": {"auth": "noauth", "udp": true, "userLevel": 8}, "sniffing": {"destOverride": ["http", "tls", "quic", "fakedns"], "enabled": true}, "tag": "mixed"}, {"port": 10809, "protocol": "http", "settings": {"userLevel": 8}, "tag": "http"}], "log": {"loglevel": "warning"}, "outbounds": [{"protocol": "vless", "tag": "proxy", "streamSettings": {"finalmask": {"tcp": [{"settings": {"delays": ["5-15"], "lengths": ["10-30"], "maxSplit": "3-5", "packets": "tlshello"}, "type": "fragment"}]}, "network": "tcp", "realitySettings": {"fingerprint": "edge", "mldsa65Verify": "", "publicKey": "4EQd_gMtkUj04qYQyNBpvHWpRdJhmr-UsR0phqYLr18", "se
+
+=== auto body ===
+auto type <class 'list'>
+outbounds 6
+route-p0001-2b9d2c43fcbf vless tcp reality None None
+route-p0001-e6906cd4f913 vless tcp reality None None
+proxy loopback None None None None
+
+=== client_inbounds ===
+(7, 17)
+(10, 17)
+=== orphan traffics inbound ids ===
+1 1 Petya_test
+4 1 Petya
+7 13 Vadim|Fedul_Lil|Timur|Ruslan|Maxim|Veronika|Lilya|Masha|Sanya_Ivk|Alexey|vazServ|Prohor|Anton
+10 2 Faya_Lil|Polina

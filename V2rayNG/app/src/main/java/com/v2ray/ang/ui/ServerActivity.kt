@@ -440,7 +440,12 @@ class ServerActivity : BaseActivity() {
             sp_network?.setSelection(network)
         }
 
-        val browserDialerMode = Utils.arrayFind(browserDialerModes, config.browserDialerMode.orEmpty())
+        val dialerMode = if (config.browserDialerMode == "WebView") {
+            ""
+        } else {
+            config.browserDialerMode.orEmpty()
+        }
+        val browserDialerMode = Utils.arrayFind(browserDialerModes, dialerMode)
         if (browserDialerMode >= 0) {
             sp_browser_dialer_mode?.setSelection(browserDialerMode)
         }

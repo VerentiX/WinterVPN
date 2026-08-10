@@ -4,14 +4,14 @@
     <item>
         <shape android:shape="oval">
             <gradient
-                android:startColor="#00F5D4"
-                android:centerColor="#00B4D8"
-                android:endColor="#7B2CBF"
                 android:type="linear"
-                android:angle="135"/>
+                android:angle="135"
+                android:startColor="#00F5D4"
+                android:centerColor="#2D7BFF"
+                android:endColor="#9B5DE5" />
             <stroke
-                android:width="4dp"
-                android:color="#A000F5D4" />
+                android:width="3dp"
+                android:color="#CCB8FFF5" />
         </shape>
     </item>
 </ripple>

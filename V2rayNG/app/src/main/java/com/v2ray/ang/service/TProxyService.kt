@@ -29,31 +29,73 @@ class TProxyService(
 
         @JvmStatic
         @Suppress("FunctionName")
+        private external fun TProxyIsServiceRunning(): Boolean
+
+        @JvmStatic
+        @Suppress("FunctionName")
         private external fun TProxyGetStats(): LongArray?
 
         init {
             System.loadLibrary("hev-socks5-tunnel")
         }
+
+        /**
+         * Stops the in-process hev worker even when the Kotlin wrapper was lost
+         * after a timed-out handover stop.
+         */
+        fun stopNativeTunnel() {
+            try {
+                TProxyStopService()
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "Failed to stop native hev-socks5-tunnel", e)
+            }
+        }
+
+        fun isNativeTunnelRunning(): Boolean {
+            return try {
+                TProxyIsServiceRunning()
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "Failed to query native hev-socks5-tunnel state", e)
+                false
+            }
+        }
+
+        private const val HEV_START_CONFIRM_ATTEMPTS = 6
+        private const val HEV_START_CONFIRM_DELAY_MS = 25L
     }
 
     /**
      * Starts the tun2socks process with the appropriate parameters.
      */
-    override fun startTun2Socks() {
-//        LogUtil.i(AppConfig.TAG, "Starting HevSocks5Tunnel via JNI")
+    override fun startTun2Socks(): Boolean {
+        // A timed-out handover can leave the native worker alive while Kotlin
+        // already dropped [tun2SocksService]. Without this stop, TProxyStartService
+        // silently no-ops when is_working is still set in hev-jni.c.
+        stopNativeTunnel()
 
         val configContent = buildConfig()
         val configFile = File(context.filesDir, "hev-socks5-tunnel.yaml").apply {
             writeText(configContent)
         }
-//        LogUtil.i(AppConfig.TAG, "Config file created: ${configFile.absolutePath}")
         LogUtil.d(AppConfig.TAG, "HevSocks5Tunnel Config content:\n$configContent")
 
-        try {
-//            LogUtil.i(AppConfig.TAG, "TProxyStartService...")
+        return try {
             TProxyStartService(configFile.absolutePath, vpnInterface.fd)
+            repeat(HEV_START_CONFIRM_ATTEMPTS) { attempt ->
+                if (isNativeTunnelRunning()) {
+                    LogUtil.i(AppConfig.TAG, "HevSocks5Tunnel started on fd=${vpnInterface.fd}")
+                    return true
+                }
+                if (attempt + 1 < HEV_START_CONFIRM_ATTEMPTS) {
+                    Thread.sleep(HEV_START_CONFIRM_DELAY_MS)
+                }
+            }
+            LogUtil.e(AppConfig.TAG, "HevSocks5Tunnel worker exited immediately after start")
+            stopNativeTunnel()
+            false
         } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "HevSocks5Tunnel exception: ${e.message}")
+            LogUtil.e(AppConfig.TAG, "HevSocks5Tunnel exception: ${e.message}", e)
+            false
         }
     }
 
@@ -101,11 +143,7 @@ class TProxyService(
      * Stops the tun2socks process
      */
     override fun stopTun2Socks() {
-        try {
-            LogUtil.i(AppConfig.TAG, "TProxyStopService...")
-            TProxyStopService()
-        } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "Failed to stop hev-socks5-tunnel", e)
-        }
+        LogUtil.i(AppConfig.TAG, "TProxyStopService...")
+        stopNativeTunnel()
     }
 }

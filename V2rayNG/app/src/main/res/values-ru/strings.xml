@@ -45,8 +45,9 @@
     <string name="geo_update_success">GeoIP/GeoSite обновлены. Переподключение…</string>
     <string name="geo_update_ready">Файлы GeoIP/GeoSite готовы.</string>
     <string name="geo_update_failed">Не удалось обновить GeoIP/GeoSite. Попытка повторится автоматически.</string>
-    <string name="app_widget_name">Winter</string>
-    <string name="app_tile_name">Winter</string>
+    <string name="geo_data_error">Не удалось загрузить базы GeoIP/GeoSite. VPN не запущен. Попробуйте ещё раз или переустановите приложение.</string>
+    <string name="app_widget_name">Lampa Mobile</string>
+    <string name="app_tile_name">Lampa Mobile</string>
     <string name="app_tile_first_use">Первое использование этой функции, пожалуйста, используйте приложение, чтобы добавить профиль</string>
     <string name="navigation_drawer_open">Открыть панель навигации</string>
     <string name="navigation_drawer_close">Закрыть панель навигации</string>
@@ -282,12 +283,12 @@
     <string name="notification_routing_mode">Маршрутизация: %1$s</string>
     <string name="notification_routing_mode_default">default</string>
     <string name="notification_routing_mode_whitelist">whitelist</string>
-    <string name="title_pref_notification_show_battery_usage">Показывать расход батареи Winter</string>
+    <string name="title_pref_notification_show_battery_usage">Показывать расход батареи Хоттабыча</string>
     <string name="summary_pref_notification_show_battery_usage">Необязательная оценка энергии UID приложения средствами Android с момента запуска VPN. Когда выключено, статистика батареи не собирается.</string>
-    <string name="notification_battery_usage">Winter: ≈%1$.3f%% · ≈%2$.2f мА·ч · %3$.3f%%/ч</string>
-    <string name="notification_battery_usage_mah">Winter: ≈%1$.1f мА·ч</string>
-    <string name="notification_battery_usage_waiting">Winter: сбор статистики батареи…</string>
-    <string name="notification_battery_usage_unavailable">Winter: энергостатистика недоступна</string>
+    <string name="notification_battery_usage">Хоттабыч: ≈%1$.3f%% · ≈%2$.2f мА·ч · %3$.3f%%/ч</string>
+    <string name="notification_battery_usage_mah">Хоттабыч: ≈%1$.1f мА·ч</string>
+    <string name="notification_battery_usage_waiting">Хоттабыч: сбор статистики батареи…</string>
+    <string name="notification_battery_usage_unavailable">Хоттабыч: энергостатистика недоступна</string>
 
 
     <string name="title_pref_domestic_dns">Внутренняя DNS (необязательно)</string>
@@ -489,6 +490,8 @@
     <string name="update_download_installing">Загрузка завершена. Открываю установщик Android…</string>
     <string name="update_install_launch_failed">Не удалось открыть установщик Android.</string>
     <string name="update_available_notification">Доступна новая версия %1$s. Нажмите, чтобы посмотреть обновление.</string>
+    <string name="update_ready_to_install">Версия %1$s уже скачана и готова к установке.</string>
+    <string name="update_later">Позже</string>
 
     <string name="title_policy_group_type">Тип политики группы</string>
     <string name="title_policy_group_subscription_id">Из группы подписки</string>

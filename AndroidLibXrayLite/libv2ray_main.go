@@ -374,16 +374,49 @@ func measureInstDelay(ctx context.Context, inst *core.Instance, url string) (int
 // Log writer implementation
 func (w *consoleLogWriter) Write(s string) error {
 	w.logger.Print(s)
+	if w.callback == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(s)
 	// Access records from auto-proxy-in represent real connections accepted
 	// from Android's TUN. Forward only those records to the app: counters also
 	// include burstObservatory probes and therefore cannot identify the live
 	// user route reliably.
 	isDirectAutoRoute := strings.Contains(s, "[auto-proxy-in -> route-")
 	isChainedAutoRoute := strings.Contains(s, "[chain-in-s") && strings.Contains(s, " -> route-p")
-	if w.callback != nil && (isDirectAutoRoute || isChainedAutoRoute) {
-		w.callback.OnEmitStatus(1, strings.TrimSpace(s))
+	if isDirectAutoRoute || isChainedAutoRoute {
+		w.callback.OnEmitStatus(1, trimmed)
+		return nil
+	}
+	// Real outbound failures while user traffic is flowing — wake Smart Priority
+	// so it can confirm the active route without waiting for the next interval.
+	if isOutboundTrafficFailure(s) {
+		w.callback.OnEmitStatus(2, trimmed)
 	}
 	return nil
+}
+
+func isOutboundTrafficFailure(s string) bool {
+	lower := strings.ToLower(s)
+	// Ignore our own health checks / observatory noise.
+	if strings.Contains(lower, "priority-probe") ||
+		strings.Contains(lower, "burstobservatory") ||
+		strings.Contains(lower, "observatory") {
+		return false
+	}
+	patterns := []string{
+		"failed to dial",
+		"failed to find an available destination",
+		"no available destination",
+		"connection refused",
+		"connection reset by peer",
+	}
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *consoleLogWriter) Close() error {

@@ -22,8 +22,8 @@ android {
         targetSdk = 37
         // 10000 = 1.0.0. Keep increasing this value for every published APK.
         // It is intentionally above the old v2rayNG code so Android accepts the rebrand as an update.
-        versionCode = 10203
-        versionName = "1.2.3"
+        versionCode = 10205
+        versionName = "1.2.5"
         multiDexEnabled = true
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
@@ -149,8 +149,6 @@ android {
 dependencies {
     // Core Libraries
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
-
-    implementation("com.airbnb.android:lottie:6.7.1")
 
     // AndroidX Core Libraries
     implementation(libs.androidx.core.ktx)

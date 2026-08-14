@@ -50,7 +50,14 @@ class CheckUpdateActivity : BaseActivity() {
             try {
                 val result = UpdateCheckerManager.checkForUpdate(includePreRelease = false)
                 if (result.hasUpdate) {
-                    showUpdateDialog(result)
+                    // Prefetch in the background even if the user cancels the dialog.
+                    AppUpdateInstaller.enqueueBackgroundDownload(this@CheckUpdateActivity, result)
+                    val ready = AppUpdateInstaller.getReadyUpdate(this@CheckUpdateActivity)
+                    if (ready != null && ready.version == result.latestVersion) {
+                        showReadyInstallDialog(ready)
+                    } else {
+                        showUpdateDialog(result)
+                    }
                 } else {
                     toastSuccess(R.string.update_already_latest_version)
                 }
@@ -71,6 +78,37 @@ class CheckUpdateActivity : BaseActivity() {
                 startUpdateDownload(result)
             }
             .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showReadyInstallDialog(ready: AppUpdateInstaller.ReadyUpdate) {
+        val notes = ready.releaseNotes?.trim().orEmpty()
+        val message = if (notes.isNotEmpty()) {
+            notes
+        } else {
+            getString(R.string.update_ready_to_install, ready.version)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.update_new_version_found, ready.version))
+            .setMessage(message)
+            .setPositiveButton(R.string.update_now) { _, _ ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                    !packageManager.canRequestPackageInstalls()
+                ) {
+                    toast(R.string.update_install_permission)
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:$packageName")
+                        )
+                    )
+                    return@setPositiveButton
+                }
+                if (!AppUpdateInstaller.launchDownloadedApk(this, ready.apkFile)) {
+                    toastError(R.string.update_install_launch_failed)
+                }
+            }
+            .setNegativeButton(R.string.update_later, null)
             .show()
     }
 

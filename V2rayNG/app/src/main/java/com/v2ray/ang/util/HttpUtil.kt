@@ -8,6 +8,7 @@ import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.net.IDN
 import java.net.Inet6Address
@@ -164,7 +165,7 @@ object HttpUtil {
             if (currentUrl == null) continue
             val client = buildOkHttpClient(request.timeout, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = false)
             val finalUserAgent = if (request.userAgent.isNullOrBlank()) {
-                "Winter-Mobile/${BuildConfig.VERSION_NAME}"
+                "Lampa-Mobile/${BuildConfig.VERSION_NAME}"
             } else {
                 request.userAgent
             }
@@ -288,31 +289,60 @@ object HttpUtil {
     fun downloadToFile(
         request: UrlContentRequest,
         targetFile: File,
-        onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null
+        resume: Boolean = false,
+        onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null,
     ): Boolean {
         val url = request.url ?: return false
         val client = buildOkHttpClient(request.timeout, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = true)
+        val existingBytes = if (resume && targetFile.exists()) targetFile.length().coerceAtLeast(0L) else 0L
+        if (!resume && targetFile.exists()) {
+            targetFile.delete()
+        }
+
         val requestBuilder = Request.Builder()
             .url(url)
             .get()
             .header("Connection", "close")
         applyRequestHeaders(request.headers, requestBuilder)
+        if (existingBytes > 0L) {
+            requestBuilder.header("Range", "bytes=$existingBytes-")
+        }
         if (request.httpPort != 0 && !request.proxyUsername.isNullOrBlank() && !request.proxyPassword.isNullOrBlank()) {
             requestBuilder.header("Proxy-Authorization", Credentials.basic(request.proxyUsername, request.proxyPassword))
         }
 
         return try {
             client.newCall(requestBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    LogUtil.w(AppConfig.TAG, "Failed to download file, code=${response.code}, url=$url")
+                val code = response.code
+                val resumeAccepted = existingBytes > 0L && code == 206
+                val fullRestart = code == 200
+                if (!resumeAccepted && !fullRestart) {
+                    LogUtil.w(AppConfig.TAG, "Failed to download file, code=$code, url=$url")
                     return false
                 }
+
                 val body = response.body ?: return false
-                val totalBytes = body.contentLength()
+                val contentLength = body.contentLength()
+                val totalBytes = when {
+                    resumeAccepted -> {
+                        parseContentRangeTotal(response.header("Content-Range"))
+                            ?: (if (contentLength >= 0L) existingBytes + contentLength else -1L)
+                    }
+                    contentLength >= 0L -> contentLength
+                    else -> -1L
+                }
+
+                if (fullRestart && existingBytes > 0L) {
+                    // Server ignored Range — rewrite from scratch.
+                    targetFile.delete()
+                }
+
+                val append = resumeAccepted && targetFile.exists()
                 body.byteStream().use { input ->
-                    targetFile.outputStream().use { output ->
+                    FileOutputStream(targetFile, append).use { output ->
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var downloadedBytes = 0L
+                        var downloadedBytes = if (append) existingBytes else 0L
+                        onProgress?.invoke(downloadedBytes, totalBytes)
                         while (true) {
                             val read = input.read(buffer)
                             if (read <= 0) break
@@ -328,5 +358,13 @@ object HttpUtil {
             LogUtil.e(AppConfig.TAG, "Failed to download file: $url", e)
             false
         }
+    }
+
+    private fun parseContentRangeTotal(header: String?): Long? {
+        if (header.isNullOrBlank()) return null
+        // Example: bytes 100-999/12345
+        val slash = header.lastIndexOf('/')
+        if (slash < 0 || slash == header.lastIndex) return null
+        return header.substring(slash + 1).trim().toLongOrNull()?.takeIf { it > 0L }
     }
 }

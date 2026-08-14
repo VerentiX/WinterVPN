@@ -1,9 +1,6 @@
 package com.v2ray.ang.ui
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.view.View
 import androidx.lifecycle.lifecycleScope
@@ -27,7 +24,6 @@ import com.v2ray.ang.helper.MmkvPreferenceDataStore
 import com.v2ray.ang.root.RootManager
 import com.v2ray.ang.core.ConnectionJournal
 import com.v2ray.ang.util.FailureLogRecorder
-import com.v2ray.ang.util.MtuPathProbe
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -52,14 +48,6 @@ class SettingsActivity : BaseActivity() {
         private val vpnDns by lazy { findPreference<EditTextPreference>(AppConfig.PREF_VPN_DNS) }
         private val vpnBypassLan by lazy { findPreference<ListPreference>(AppConfig.PREF_VPN_BYPASS_LAN) }
         private val vpnInterfaceAddress by lazy { findPreference<ListPreference>(AppConfig.PREF_VPN_INTERFACE_ADDRESS_CONFIG_INDEX) }
-        private val vpnMtu by lazy { findPreference<EditTextPreference>(AppConfig.PREF_VPN_MTU) }
-        private val customMtu by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_CUSTOM_MTU_ENABLED) }
-        private val adaptiveMtu by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_ADAPTIVE_MTU_ENABLED) }
-        private val probeMtuWifi by lazy { findPreference<Preference>(AppConfig.PREF_PROBE_MTU_WIFI) }
-        private val probeMtuCellular by lazy { findPreference<Preference>(AppConfig.PREF_PROBE_MTU_CELLULAR) }
-
-        private var networkCallback: ConnectivityManager.NetworkCallback? = null
-        private var lastKnownMtuTransport: MtuPathProbe.Transport? = null
 
         private val mux by lazy { findPreference<CheckBoxPreference>(AppConfig.PREF_MUX_ENABLED) }
         private val muxConcurrency by lazy { findPreference<EditTextPreference>(AppConfig.PREF_MUX_CONCURRENCY) }
@@ -238,49 +226,6 @@ class SettingsActivity : BaseActivity() {
                 true
             }
 
-            adaptiveMtu?.setOnPreferenceChangeListener { _, newValue ->
-                val adaptiveEnabled = newValue as Boolean
-                if (!adaptiveEnabled && SettingsManager.isCustomMtuEnabled()) {
-                    SettingsManager.setRuntimeVpnMtu(null)
-                }
-                updateMtuSettingsUi(
-                    customEnabled = SettingsManager.isCustomMtuEnabled(),
-                    adaptiveEnabled = adaptiveEnabled,
-                )
-                requireActivity().window.decorView.post {
-                    if (CoreServiceManager.isRunning()) {
-                        CoreServiceManager.requestTunRecreate()
-                    }
-                }
-                true
-            }
-            customMtu?.setOnPreferenceChangeListener { _, newValue ->
-                val enabled = newValue as Boolean
-                if (enabled && !MmkvManager.decodeSettingsBool(AppConfig.PREF_ADAPTIVE_MTU_ENABLED, false)) {
-                    SettingsManager.setRuntimeVpnMtu(null)
-                }
-                updateMtuSettingsUi(
-                    customEnabled = enabled,
-                    adaptiveEnabled = MmkvManager.decodeSettingsBool(
-                        AppConfig.PREF_ADAPTIVE_MTU_ENABLED,
-                        false,
-                    ),
-                )
-                requireActivity().window.decorView.post {
-                    if (CoreServiceManager.isRunning()) {
-                        CoreServiceManager.requestTunRecreate()
-                    }
-                }
-                true
-            }
-            probeMtuWifi?.setOnPreferenceClickListener {
-                runMtuProbe(MtuPathProbe.Transport.WIFI)
-                true
-            }
-            probeMtuCellular?.setOnPreferenceClickListener {
-                runMtuProbe(MtuPathProbe.Transport.CELLULAR)
-                true
-            }
             enableLocalProxy?.setOnPreferenceChangeListener { _, newValue ->
                 updateEnableLocalProxy(newValue as Boolean)
                 true
@@ -435,163 +380,6 @@ class SettingsActivity : BaseActivity() {
             updateFragment(MmkvManager.decodeSettingsBool(AppConfig.PREF_FRAGMENT_ENABLED, false))
 
             updateDynamicSocksPort(MmkvManager.decodeSettingsBool(AppConfig.PREF_DYNAMIC_SOCKS_PORT, false))
-
-            updateMtuSettingsUi(
-                customEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_CUSTOM_MTU_ENABLED, false),
-                adaptiveEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_ADAPTIVE_MTU_ENABLED, false),
-            )
-            registerMtuTransportWatcher()
-        }
-
-        override fun onStop() {
-            unregisterMtuTransportWatcher()
-            super.onStop()
-        }
-
-        private fun registerMtuTransportWatcher() {
-            unregisterMtuTransportWatcher()
-            val connectivity = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-                ?: return
-            lastKnownMtuTransport = MtuPathProbe.detectActiveTransport(connectivity)
-            val callback = object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) = refreshMtuTilesIfTransportChanged()
-                override fun onLost(network: Network) = refreshMtuTilesIfTransportChanged()
-                override fun onCapabilitiesChanged(
-                    network: Network,
-                    networkCapabilities: NetworkCapabilities,
-                ) = refreshMtuTilesIfTransportChanged()
-            }
-            networkCallback = callback
-            try {
-                connectivity.registerDefaultNetworkCallback(callback)
-            } catch (_: Exception) {
-                networkCallback = null
-            }
-        }
-
-        private fun unregisterMtuTransportWatcher() {
-            val callback = networkCallback ?: return
-            networkCallback = null
-            val connectivity = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-                ?: return
-            try {
-                connectivity.unregisterNetworkCallback(callback)
-            } catch (_: Exception) {
-            }
-        }
-
-        private fun refreshMtuTilesIfTransportChanged() {
-            view?.post {
-                if (!isAdded) return@post
-                val connectivity = requireContext()
-                    .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-                val active = MtuPathProbe.detectActiveTransport(connectivity)
-                if (active == lastKnownMtuTransport) return@post
-                lastKnownMtuTransport = active
-                updateMtuSettingsUi(
-                    customEnabled = SettingsManager.isCustomMtuEnabled(),
-                    adaptiveEnabled = MmkvManager.decodeSettingsBool(
-                        AppConfig.PREF_ADAPTIVE_MTU_ENABLED,
-                        false,
-                    ),
-                )
-            }
-        }
-
-        private fun updateMtuSettingsUi(customEnabled: Boolean, adaptiveEnabled: Boolean) {
-            val vpn = MmkvManager.decodeSettingsString(AppConfig.PREF_MODE, VPN) == VPN
-            customMtu?.isEnabled = vpn
-            vpnMtu?.isEnabled = vpn && customEnabled && !adaptiveEnabled
-            adaptiveMtu?.isEnabled = vpn && customEnabled
-
-            val connectivity = requireContext()
-                .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val active = MtuPathProbe.detectActiveTransport(connectivity)
-            lastKnownMtuTransport = active
-            val probesActive = vpn && customEnabled && adaptiveEnabled
-
-            updateProbeTile(
-                probeMtuWifi,
-                MtuPathProbe.Transport.WIFI,
-                probesActive && active == MtuPathProbe.Transport.WIFI,
-            )
-            updateProbeTile(
-                probeMtuCellular,
-                MtuPathProbe.Transport.CELLULAR,
-                probesActive && active == MtuPathProbe.Transport.CELLULAR,
-            )
-        }
-
-        private fun updateProbeTile(
-            pref: Preference?,
-            transport: MtuPathProbe.Transport,
-            clickable: Boolean,
-        ) {
-            if (pref == null) return
-            pref.isEnabled = clickable
-            val stored = SettingsManager.getAdaptiveMtuForTransport(transport)
-            pref.summary = when {
-                stored != null ->
-                    getString(R.string.summary_pref_probe_mtu_value, stored)
-                !clickable && SettingsManager.isAdaptiveMtuEnabled() ->
-                    getString(R.string.summary_pref_probe_mtu_wrong_transport)
-                else ->
-                    getString(R.string.summary_pref_probe_mtu_unset)
-            }
-        }
-
-        private fun runMtuProbe(transport: MtuPathProbe.Transport) {
-            val connectivity = requireContext()
-                .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            if (MtuPathProbe.detectActiveTransport(connectivity) != transport) {
-                requireContext().toastError(R.string.summary_pref_probe_mtu_wrong_transport)
-                updateMtuSettingsUi(
-                    customEnabled = SettingsManager.isCustomMtuEnabled(),
-                    adaptiveEnabled = SettingsManager.isAdaptiveMtuEnabled(),
-                )
-                return
-            }
-            val pref = when (transport) {
-                MtuPathProbe.Transport.WIFI -> probeMtuWifi
-                MtuPathProbe.Transport.CELLULAR -> probeMtuCellular
-            }
-            pref?.isEnabled = false
-            pref?.summary = getString(R.string.summary_pref_probe_mtu_running)
-
-            lifecycleScope.launch {
-                val upper = MtuPathProbe.linkMtuHint(connectivity)
-                val result = withContext(Dispatchers.IO) {
-                    val control = if (CoreServiceManager.isRunning()) {
-                        CoreServiceManager.serviceControl
-                    } else {
-                        null
-                    }
-                    MtuPathProbe.probeTunMtu(control, upper)
-                }
-                if (!isAdded) return@launch
-                if (result == null) {
-                    requireContext().toastError(R.string.toast_probe_mtu_failed)
-                    updateMtuSettingsUi(
-                        customEnabled = SettingsManager.isCustomMtuEnabled(),
-                        adaptiveEnabled = SettingsManager.isAdaptiveMtuEnabled(),
-                    )
-                    return@launch
-                }
-                SettingsManager.setAdaptiveMtuForTransport(transport, result)
-                if (SettingsManager.isAdaptiveMtuEnabled() &&
-                    MtuPathProbe.detectActiveTransport(connectivity) == transport
-                ) {
-                    val changed = SettingsManager.setRuntimeVpnMtu(result)
-                    if (changed && CoreServiceManager.isRunning()) {
-                        CoreServiceManager.requestTunRecreate()
-                    }
-                }
-                requireContext().toastSuccess(getString(R.string.toast_probe_mtu_success, result))
-                updateMtuSettingsUi(
-                    customEnabled = SettingsManager.isCustomMtuEnabled(),
-                    adaptiveEnabled = SettingsManager.isAdaptiveMtuEnabled(),
-                )
-            }
         }
 
         private fun updateMode(value: String?) {
@@ -616,10 +404,6 @@ class SettingsActivity : BaseActivity() {
             } else {
                 updateHevTunSettings(false)
             }
-            updateMtuSettingsUi(
-                customEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_CUSTOM_MTU_ENABLED, false),
-                adaptiveEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_ADAPTIVE_MTU_ENABLED, false),
-            )
         }
 
         private fun updateLocalDns(enabled: Boolean) {

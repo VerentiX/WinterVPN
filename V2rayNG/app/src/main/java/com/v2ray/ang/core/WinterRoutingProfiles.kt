@@ -79,14 +79,12 @@ internal object WinterRoutingProfiles {
     }
 
     private fun parseObject(root: JsonObject): Bundle? {
-        val profiles = root.getAsJsonObject("profiles")
-        val defaultObj = root.getAsJsonObject("default")
-            ?: root.getAsJsonObject("full")
-            ?: profiles?.getAsJsonObject("default")
-            ?: profiles?.getAsJsonObject("full")
+        val profiles = root.memberObject("profiles")
+        val defaultObj = root.memberObject("default", "full")
+            ?: profiles?.memberObject("default", "full")
             ?: return null
-        val whitelistObj = root.getAsJsonObject("whitelist")
-            ?: profiles?.getAsJsonObject("whitelist")
+        val whitelistObj = root.memberObject("whitelist")
+            ?: profiles?.memberObject("whitelist")
             ?: return null
         val defaultProfile = profileFromJson(defaultObj) ?: return null
         val whitelistProfile = profileFromJson(whitelistObj) ?: return null
@@ -144,6 +142,14 @@ internal object WinterRoutingProfiles {
             add("blockIp", JsonArray().apply { profile.blockIp.forEach { add(it) } })
         }
 
+    private fun JsonObject.memberObject(vararg keys: String): JsonObject? {
+        keys.forEach { key ->
+            val value = get(key)?.takeIf { it.isJsonObject }?.asJsonObject
+            if (value != null) return value
+        }
+        return null
+    }
+
     private fun stringField(obj: JsonObject, vararg keys: String): String? {
         keys.forEach { key ->
             val value = obj.get(key)
@@ -177,16 +183,20 @@ internal object WinterRoutingProfiles {
         return emptyMap()
     }
 
-    private fun decodeBase64(encoded: String): String? = runCatching {
+    private fun decodeBase64(encoded: String): String? {
         val padded = encoded + "=".repeat((-encoded.length).mod(4))
-        String(
-            Base64.decode(
-                padded,
-                Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
-            ),
-            Charsets.UTF_8,
+        val flags = listOf(
+            Base64.DEFAULT,
+            Base64.NO_WRAP,
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+            Base64.URL_SAFE or Base64.NO_WRAP,
         )
-    }.recoverCatching {
-        String(Base64.decode(encoded, Base64.DEFAULT), Charsets.UTF_8)
-    }.getOrNull()
+        flags.forEach { flag ->
+            val text = runCatching {
+                String(Base64.decode(padded, flag), Charsets.UTF_8)
+            }.getOrNull()
+            if (!text.isNullOrBlank() && text.trimStart().startsWith("{")) return text
+        }
+        return null
+    }
 }

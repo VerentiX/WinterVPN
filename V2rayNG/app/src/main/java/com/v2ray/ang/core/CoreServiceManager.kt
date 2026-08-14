@@ -24,7 +24,6 @@ import com.v2ray.ang.extension.toast
 import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SubscriptionRefreshManager
-import com.v2ray.ang.handler.GeoAssetUpdater
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.SpeedtestManager
@@ -120,6 +119,7 @@ object CoreServiceManager {
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${e.message}", e)
             showToast(context) { toast(e.message ?: e.javaClass.simpleName) }
+            notifyStartFailure(context, e.message ?: e.javaClass.simpleName)
             return false
         }
         return true
@@ -142,7 +142,22 @@ object CoreServiceManager {
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${e.message}", e)
             showToast(context) { toast(e.message ?: e.javaClass.simpleName) }
+            notifyStartFailure(context, e.message ?: e.javaClass.simpleName)
         }
+    }
+
+    /** Publishes the authoritative daemon state to every registered UI client. */
+    fun notifyUiCurrentServiceState(context: Context) {
+        val active = serviceControl?.isServiceActive() == true || coreController.isRunning
+        MessageUtil.sendMsg2UI(
+            context.applicationContext,
+            if (active) AppConfig.MSG_STATE_RUNNING else AppConfig.MSG_STATE_NOT_RUNNING,
+            "",
+        )
+    }
+
+    private fun notifyStartFailure(context: Context, message: String) {
+        MessageUtil.sendMsg2UI(context.applicationContext, AppConfig.MSG_STATE_START_FAILURE, message)
     }
 
     /** Toasty requires a prepared main looper, while service actions may come from workers. */
@@ -275,6 +290,7 @@ object CoreServiceManager {
     private fun startContextService(context: Context) {
         if (coreController.isRunning) {
             LogUtil.w(AppConfig.TAG, "StartCore-Manager: Core already running")
+            notifyUiCurrentServiceState(context)
             return
         }
 
@@ -371,9 +387,6 @@ object CoreServiceManager {
         } catch (e: Exception) {
             val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: $message", e)
-            if (GeoAssetUpdater.isGeoDataError(message)) {
-                GeoAssetUpdater.forceUpdate(service, reconnectAfterUpdate = true)
-            }
             MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
             NotificationManager.cancelNotification()
             false
@@ -415,6 +428,11 @@ object CoreServiceManager {
             tunFd = 0
         }
 
+        // Seed route label BEFORE the first FGS notification so the shade never
+        // sticks on "Маршрут: ожидание трафика" while the core is already up.
+        outboundLabels = buildOutboundLabels(prepared.content)
+        PriorityFailoverManager.currentRouteTag()?.let(::setActiveOutboundTag)
+
         NotificationManager.showNotification(config)
         CoreNativeManager.reconcileBrowserDialer(dialerAddr)
         coreController.startLoop(prepared.content, tunFd)
@@ -426,9 +444,6 @@ object CoreServiceManager {
         currentConfig = config
         currentConfigGuid = guid
         currentRuntimeConfig = prepared.content
-        outboundLabels = buildOutboundLabels(prepared.content)
-        // Do not blank the route label here: that paints "Маршрут: ожидание трафика"
-        // into the FGS notification before Smart Priority / access-log can republish.
         // Soft reload keeps the previous label until onCoreStarted updates it.
 
         if (browserDialer != null) {
@@ -497,9 +512,6 @@ object CoreServiceManager {
                 LogUtil.e(AppConfig.TAG, "StartCore-Manager: Reload preparation failed: $message", e)
                 PriorityFailoverManager.rollbackPendingSwitch()
                 PriorityFailoverManager.notifyReloadAborted()
-                if (GeoAssetUpdater.isGeoDataError(message)) {
-                    GeoAssetUpdater.forceUpdate(service, reconnectAfterUpdate = true)
-                }
                 MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
                 // The current core was not touched, so report the reload as
                 // safely handled and keep the existing VPN connection alive.
@@ -677,8 +689,7 @@ object CoreServiceManager {
             ?.groupValues
             ?.getOrNull(1)
             ?: return
-        // Real TUN traffic is the ground truth for leastLoad seamless balancers
-        // (Smart Priority's monitored index can differ from the outbound in use).
+        // Real TUN traffic confirms the outbound in use after a priority reload.
         runCatching { setActiveOutboundTag(routeTag) }
             .onFailure { LogUtil.e(AppConfig.TAG, "StartCore-Manager: observeAccessLog failed", it) }
     }
@@ -851,8 +862,10 @@ object CoreServiceManager {
          * @return Always returns 0.
          */
         override fun onEmitStatus(l: Long, s: String?): Long {
-            if (l == 1L && !s.isNullOrBlank()) {
-                observeAccessLog(s)
+            if (s.isNullOrBlank()) return 0
+            when (l) {
+                1L -> observeAccessLog(s)
+                2L -> PriorityFailoverManager.onTrafficError(s)
             }
             return 0
         }

@@ -21,7 +21,7 @@ enum class NotificationChannelType(
     ),
     APP_UPDATE(
         channelId = "zimavpn_app_updates",
-        channelName = "Обновления Winter",
+        channelName = "Обновления Хоттабыча",
         notificationId = 14
     )
 }

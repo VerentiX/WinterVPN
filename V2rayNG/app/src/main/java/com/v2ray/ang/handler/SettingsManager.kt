@@ -620,58 +620,29 @@ object SettingsManager {
         return VpnInterfaceAddressConfig.getConfigByIndex(selectedIndex ?: 0)
     }
 
-    /**
-     * Manual VPN MTU from settings, or 1500 as fallback when link MTU is not
-     * available yet (custom MTU off / adaptive waiting for network).
-     */
-    fun getVpnMtu(): Int {
-        if (!isCustomMtuEnabled()) return AppConfig.VPN_MTU
-        return Utils.parseInt(MmkvManager.decodeSettingsString(AppConfig.PREF_VPN_MTU), AppConfig.VPN_MTU)
-    }
+    /** Fixed VPN TUN MTU (not user-configurable). */
+    fun getVpnMtu(): Int = AppConfig.VPN_MTU
 
-    /**
-     * Effective TUN MTU: runtime value (link / probed) when set, otherwise
-     * [getVpnMtu] (manual or 1500 fallback).
-     */
-    fun getEffectiveVpnMtu(): Int = runtimeVpnMtu ?: getVpnMtu()
+    /** Effective TUN MTU — always [AppConfig.VPN_MTU]. */
+    fun getEffectiveVpnMtu(): Int = AppConfig.VPN_MTU
 
-    fun isCustomMtuEnabled(): Boolean =
-        MmkvManager.decodeSettingsBool(AppConfig.PREF_CUSTOM_MTU_ENABLED, false) == true
+    fun isCustomMtuEnabled(): Boolean = false
 
-    /**
-     * True when TUN MTU should follow the active network (and optional probes):
-     * either custom MTU is off (use Android link MTU unchanged), or adaptive is on.
-     */
-    fun followsNetworkMtu(): Boolean =
-        !isCustomMtuEnabled() || isAdaptiveMtuEnabled()
+    /** Network/adaptive MTU following is disabled; TUN always uses [AppConfig.VPN_MTU]. */
+    fun followsNetworkMtu(): Boolean = false
 
-    fun isAdaptiveMtuEnabled(): Boolean =
-        isCustomMtuEnabled() &&
-            MmkvManager.decodeSettingsBool(AppConfig.PREF_ADAPTIVE_MTU_ENABLED, false) == true
+    fun isAdaptiveMtuEnabled(): Boolean = false
 
-    fun getAdaptiveMtuForTransport(transport: MtuPathProbe.Transport): Int? {
-        val key = when (transport) {
-            MtuPathProbe.Transport.WIFI -> AppConfig.PREF_ADAPTIVE_MTU_WIFI
-            MtuPathProbe.Transport.CELLULAR -> AppConfig.PREF_ADAPTIVE_MTU_CELLULAR
-        }
-        val stored = MmkvManager.decodeSettingsInt(key, 0)
-        return stored.takeIf { it in 1280..9_000 }
-    }
+    fun getAdaptiveMtuForTransport(transport: MtuPathProbe.Transport): Int? = null
 
     fun setAdaptiveMtuForTransport(transport: MtuPathProbe.Transport, mtu: Int) {
-        val key = when (transport) {
-            MtuPathProbe.Transport.WIFI -> AppConfig.PREF_ADAPTIVE_MTU_WIFI
-            MtuPathProbe.Transport.CELLULAR -> AppConfig.PREF_ADAPTIVE_MTU_CELLULAR
-        }
-        MmkvManager.encodeSettings(key, mtu.coerceIn(1280, 9_000))
+        // MTU is fixed; probes/settings no longer apply.
     }
 
-    /** @return true only when the effective MTU actually changed. */
+    /** No-op: TUN MTU is fixed to [AppConfig.VPN_MTU]. */
     fun setRuntimeVpnMtu(mtu: Int?): Boolean {
-        val normalized = mtu?.coerceIn(1280, 9_000)
-        val changed = runtimeVpnMtu != normalized
-        runtimeVpnMtu = normalized
-        return changed
+        runtimeVpnMtu = null
+        return false
     }
 
     /**
@@ -727,7 +698,10 @@ object SettingsManager {
         // Write defaults in the exact order requested by the user
         ensureDefaultValue(AppConfig.PREF_MODE, VPN)
         ensureDefaultValue(AppConfig.PREF_VPN_DNS, AppConfig.DNS_VPN)
-        ensureDefaultValue(AppConfig.PREF_VPN_MTU, AppConfig.VPN_MTU.toString())
+        // Force fixed TUN MTU; ignore any previously saved custom/adaptive values.
+        MmkvManager.encodeSettings(AppConfig.PREF_VPN_MTU, AppConfig.VPN_MTU.toString())
+        MmkvManager.encodeSettings(AppConfig.PREF_CUSTOM_MTU_ENABLED, false)
+        MmkvManager.encodeSettings(AppConfig.PREF_ADAPTIVE_MTU_ENABLED, false)
         ensureDefaultValue(AppConfig.PREF_SOCKS_PORT, AppConfig.PORT_SOCKS)
         ensureDefaultValue(AppConfig.PREF_REMOTE_DNS, AppConfig.DNS_PROXY)
         ensureDefaultValue(AppConfig.PREF_DOMESTIC_DNS, AppConfig.DNS_DIRECT)

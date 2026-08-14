@@ -255,7 +255,7 @@ object AppConfig {
 
     /** Give a good name to this, IDK*/
     const val VPN = "VPN"
-    const val VPN_MTU = 1500
+    const val VPN_MTU = 1280
 
     /** Root (system-wide) mode runtime constants. */
     const val ROOT_RUNTIME_DIR = "root"

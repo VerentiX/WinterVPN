@@ -63,6 +63,7 @@ class CoreVpnService : VpnService(), ServiceControl {
 
         /** Native hev stop used to wait for its 60 s UDP timeout during handover. */
         private const val TUN2SOCKS_STOP_TIMEOUT_MS = 2_000L
+        private const val TUN2SOCKS_HANDOVER_STOP_TIMEOUT_MS = 8_000L
     }
 
     private enum class ServiceState {
@@ -208,6 +209,11 @@ class CoreVpnService : VpnService(), ServiceControl {
                 val unblocked = lastNetworkBlocked && !blocked
                 lastNetworkBlocked = blocked
                 LogUtil.transport("Network blocked state=$blocked network=$network")
+                if (blocked && isServiceReady()) {
+                    // Underlying path is blocked — confirm Smart Priority route without
+                    // waiting for the normal probe interval.
+                    PriorityFailoverManager.onTrafficError("network blocked")
+                }
                 if (unblocked && isServiceReady()) {
                     scheduleNetworkReload()
                 }
@@ -303,6 +309,9 @@ class CoreVpnService : VpnService(), ServiceControl {
         }
         if (!shouldStart) {
             LogUtil.i(AppConfig.TAG, "StartCore-VPN: Ignoring duplicate start in state $serviceState")
+            if (serviceState == ServiceState.RUNNING || serviceState == ServiceState.RELOADING) {
+                CoreServiceManager.notifyUiCurrentServiceState(this)
+            }
             return START_STICKY
         }
 
@@ -345,6 +354,13 @@ class CoreVpnService : VpnService(), ServiceControl {
         }
         if (!CoreServiceManager.startCoreLoop(mInterface)) {
             LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to start core loop")
+            stopAllService()
+            return
+        }
+
+        // SOCKS must be listening before hev attaches to the new TUN fd.
+        if (!runTun2socks()) {
+            LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to start tun2socks after core start")
             stopAllService()
             return
         }
@@ -433,7 +449,6 @@ class CoreVpnService : VpnService(), ServiceControl {
             return false
         }
 
-        runTun2socks()
         return true
     }
 
@@ -597,19 +612,18 @@ class CoreVpnService : VpnService(), ServiceControl {
      * Runs the tun2socks process.
      * Starts the tun2socks process with the appropriate parameters.
      */
-    private fun runTun2socks() {
-        if (SettingsManager.isUsingHevTun()) {
-            tun2SocksService = TProxyService(
-                context = applicationContext,
-                vpnInterface = mInterface,
-                isRunningProvider = { isRunning },
-                restartCallback = { runTun2socks() }
-            )
-        } else {
+    private fun runTun2socks(): Boolean {
+        if (!SettingsManager.isUsingHevTun()) {
             tun2SocksService = null
+            return true
         }
-
-        tun2SocksService?.startTun2Socks()
+        tun2SocksService = TProxyService(
+            context = applicationContext,
+            vpnInterface = mInterface,
+            isRunningProvider = { isRunning },
+            restartCallback = { runTun2socks() }
+        )
+        return tun2SocksService?.startTun2Socks() ?: false
     }
 
     /**
@@ -617,18 +631,27 @@ class CoreVpnService : VpnService(), ServiceControl {
      * The reference is detached first so no second caller can stop the same native
      * instance while a timed-out stop is still unwinding.
      */
-    private fun stopTun2SocksWithTimeout(reason: String): Boolean {
-        val control = tun2SocksService ?: return true
+    private fun stopTun2SocksWithTimeout(
+        reason: String,
+        timeoutMs: Long = TUN2SOCKS_STOP_TIMEOUT_MS,
+    ): Boolean {
+        // Drop the Kotlin wrapper first so a timed-out stop cannot be invoked twice.
+        // Never call native stop on the caller thread: pthread_join can block for the
+        // full UDP idle timeout and freeze VPN recovery or the UI path.
         tun2SocksService = null
+        if (!SettingsManager.isUsingHevTun()) {
+            return true
+        }
+
         val executor = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "Winter-tun2socks-stop").apply { isDaemon = true }
         }
         val startedAt = SystemClock.elapsedRealtime()
         return try {
             val stopped = executor.submit(Callable<Boolean> {
-                control.stopTun2Socks()
+                TProxyService.stopNativeTunnel()
                 true
-            }).get(TUN2SOCKS_STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            }).get(timeoutMs, TimeUnit.MILLISECONDS)
             LogUtil.transport(
                 "tun2socks stopped for $reason in " +
                     "${SystemClock.elapsedRealtime() - startedAt}ms"
@@ -638,15 +661,39 @@ class CoreVpnService : VpnService(), ServiceControl {
             LogUtil.e(
                 AppConfig.TAG,
                 "StartCore-VPN: tun2socks stop timed out after " +
-                    "${TUN2SOCKS_STOP_TIMEOUT_MS}ms during $reason; continuing recovery"
+                    "${timeoutMs}ms during $reason"
             )
             false
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to stop tun2socks during $reason", e)
             false
         } finally {
-            executor.shutdownNow()
+            executor.shutdown()
         }
+    }
+
+    /** Rebind hev to the freshly restarted SOCKS listener without recreating TUN. */
+    private fun restartTun2SocksKeepingTun(reason: String): Boolean {
+        if (!SettingsManager.isUsingHevTun()) {
+            return true
+        }
+        if (!::mInterface.isInitialized) {
+            return false
+        }
+        LogUtil.transport("Restarting hev after $reason")
+        if (!stopTun2SocksWithTimeout("soft reload: $reason")) {
+            return false
+        }
+        return runTun2socks()
+    }
+
+    /** Stop hev during TUN handover; retry once with a longer join budget. */
+    private fun stopTun2SocksForHandover(reason: String): Boolean {
+        if (stopTun2SocksWithTimeout(reason, TUN2SOCKS_STOP_TIMEOUT_MS)) {
+            return true
+        }
+        LogUtil.transport("Retrying tun2socks stop for $reason with extended timeout")
+        return stopTun2SocksWithTimeout(reason, TUN2SOCKS_HANDOVER_STOP_TIMEOUT_MS)
     }
 
     private fun isServiceReady(): Boolean = serviceState == ServiceState.RUNNING
@@ -807,6 +854,9 @@ class CoreVpnService : VpnService(), ServiceControl {
             if (!CoreServiceManager.reloadCoreLoop(mInterface)) {
                 LogUtil.e(AppConfig.TAG, "StartCore-VPN: Soft reload failed; attempting hard reconnect")
                 recoverFromFailedSoftReload()
+            } else if (!restartTun2SocksKeepingTun(reason)) {
+                LogUtil.e(AppConfig.TAG, "StartCore-VPN: hev restart failed after soft reload; attempting hard reconnect")
+                recoverFromFailedSoftReload()
             } else {
                 serviceState = ServiceState.RUNNING
                 scheduleValidatedNetworkReloadIfReady()
@@ -832,7 +882,14 @@ class CoreVpnService : VpnService(), ServiceControl {
                 LogUtil.w(AppConfig.TAG, "StartCore-VPN: Failed to close old TUN during recovery", e)
             }
             isRunning = false
-            stopTun2SocksWithTimeout("failed soft reload recovery")
+            if (!stopTun2SocksForHandover("failed soft reload recovery")) {
+                LogUtil.e(
+                    AppConfig.TAG,
+                    "StartCore-VPN: tun2socks would not stop; closing VPN to avoid a traffic blackhole"
+                )
+                stopAllServiceLocked(true)
+                return
+            }
             if (!CoreServiceManager.stopCoreLoop(preservePriorityState = true)) {
                 LogUtil.e(AppConfig.TAG, "StartCore-VPN: Core would not stop; closing VPN to avoid a traffic blackhole")
                 stopAllServiceLocked(true)
@@ -887,7 +944,14 @@ class CoreVpnService : VpnService(), ServiceControl {
                 LogUtil.w(AppConfig.TAG, "StartCore-VPN: Failed to close old TUN", e)
             }
             isRunning = false
-            stopTun2SocksWithTimeout("transport change")
+            if (!stopTun2SocksForHandover("transport change")) {
+                LogUtil.e(
+                    AppConfig.TAG,
+                    "StartCore-VPN: tun2socks would not stop after transport change; closing VPN"
+                )
+                stopAllServiceLocked(true)
+                return
+            }
             // A Wi-Fi/LTE handover must keep the current priority route. Starting
             // again from P0 adds an unnecessary failed probe and reconnect delay.
             if (!CoreServiceManager.stopCoreLoop(preservePriorityState = true)) {

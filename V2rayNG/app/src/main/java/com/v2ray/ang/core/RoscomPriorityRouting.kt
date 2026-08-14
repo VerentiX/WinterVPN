@@ -8,15 +8,38 @@ import com.v2ray.ang.util.LogUtil
 /**
  * Happ-style RoscomVPN routing profiles applied at Smart Priority activate time.
  *
- * p0–p4 keep the full split profile; p5+ switches to the ISP-whitelist profile.
- * Structural balancer / inbound rules are preserved; only user domain/IP rules and
- * DNS hosts are rewritten. The selected [route-pN] outbound is never reset here.
+ * p0–p4 use the full/default profile; p5+ always uses the ISP-whitelist profile.
+ * Structural balancer / inbound / port-only rules are preserved; only user domain/IP
+ * rules and DNS hosts are rewritten. The selected [route-pN] outbound is never reset here.
  */
 internal object RoscomPriorityRouting {
     /** First numeric priority that uses the whitelist profile (route-p0005…). */
     const val WHITELIST_MIN_PRIORITY = 5
 
     enum class Mode { FULL, WHITELIST }
+
+    /** ASN 32934 plus geoip; Instagram MQTT/API often connect by IP. */
+    internal val FACEBOOK_PROXY_IP = listOf(
+        "geoip:facebook",
+        "31.13.24.0/21",
+        "31.13.64.0/18",
+        "45.64.40.0/22",
+        "66.220.144.0/20",
+        "69.63.176.0/20",
+        "69.171.224.0/19",
+        "74.119.76.0/22",
+        "102.132.96.0/20",
+        "103.4.96.0/22",
+        "129.134.0.0/17",
+        "157.240.0.0/16",
+        "163.70.128.0/17",
+        "173.252.64.0/19",
+        "179.60.192.0/22",
+        "185.60.216.0/22",
+        "185.89.218.0/23",
+        "199.201.64.0/22",
+        "204.15.20.0/22",
+    )
 
     data class Profile(
         val name: String,
@@ -116,7 +139,10 @@ internal object RoscomPriorityRouting {
             "domain:tcsbank.ru",
         ),
         proxyIp = emptyList(),
-        blockSites = emptyList(),
+        blockSites = listOf(
+            "geosite:category-ads",
+            "geosite:category-ads-all",
+        ),
         blockIp = emptyList(),
     )
 
@@ -132,6 +158,13 @@ internal object RoscomPriorityRouting {
         return modeForRouteTag(route)
     }
 
+    fun profileModeForRouteTag(routeTag: String): Mode = modeForRouteTag(routeTag)
+
+    fun profileModeForActiveRoute(
+        plan: PriorityFailoverConfig.Plan,
+        activeIndex: Int,
+    ): Mode = modeForActiveRoute(plan, activeIndex)
+
     fun profileFor(mode: Mode): Profile {
         val remote = WinterRoutingProfiles.load()
         return when (mode) {
@@ -144,8 +177,12 @@ internal object RoscomPriorityRouting {
      * Rewrite user routing + DNS hosts for the active priority route.
      * Returns false when the config lacks proxy/direct/block outbounds.
      */
-    fun apply(config: JsonObject, plan: PriorityFailoverConfig.Plan, activeIndex: Int): Boolean {
-        val mode = modeForActiveRoute(plan, activeIndex)
+    fun apply(
+        config: JsonObject,
+        plan: PriorityFailoverConfig.Plan,
+        activeIndex: Int,
+    ): Boolean {
+        val mode = profileModeForActiveRoute(plan, activeIndex)
         val profile = profileFor(mode)
         val tags = resolveOutboundTags(config.arrayOrNull("outbounds")) ?: run {
             runCatching {
@@ -167,21 +204,24 @@ internal object RoscomPriorityRouting {
         }
 
         val userRules = buildUserRules(profile, tags)
-        // Structural balancer/loopback bridges MUST stay ahead of domain/ip user rules.
-        // Otherwise geosite:google-play (etc.) matches sniffed mtalk on auto-proxy-in and
-        // sends it to the loopback outbound "proxy" again → accept storm + heat.
-        val structural = JsonArray()
+        // inboundTag bridges first, then UDP/443 (Meta QUIC bypass, then YouTube block).
+        // Otherwise a proxy-loopback QUIC exception rematches on auto-proxy-in.
+        val inboundStructural = JsonArray()
+        val quicStructural = JsonArray()
         val restPreserved = JsonArray()
         preserved.forEach { element ->
             val rule = element.takeIf { it.isJsonObject }?.asJsonObject
-            if (rule != null && (rule.has("inboundTag") || rule.has("balancerTag"))) {
-                structural.add(element)
-            } else {
-                restPreserved.add(element)
+            when {
+                rule == null -> restPreserved.add(element)
+                rule.has("inboundTag") || rule.has("balancerTag") -> inboundStructural.add(element)
+                isUdp443Rule(rule) -> quicStructural.add(element)
+                else -> restPreserved.add(element)
             }
         }
         val merged = JsonArray()
-        structural.forEach { merged.add(it) }
+        inboundStructural.forEach { merged.add(it) }
+        merged.add(metaQuicProxyRule(tags))
+        quicStructural.forEach { merged.add(it) }
         userRules.forEach { merged.add(it) }
         restPreserved.forEach { merged.add(it) }
         routing.add("rules", merged)
@@ -319,11 +359,36 @@ internal object RoscomPriorityRouting {
         if (rule.has("inboundTag")) return false
         if (rule.has("balancerTag")) return false
         if (rule.has("process")) return false
+        if (isUdp443Rule(rule)) return false
+        if (isPortOnlyRule(rule)) return false
         val outbound = rule.stringOrNull("outboundTag") ?: return false
         if (outbound != tags.proxy && outbound != tags.direct && outbound != tags.block) {
             return false
         }
-        return rule.has("domain") || rule.has("ip") || rule.has("port")
+        return rule.has("domain") || rule.has("ip")
+    }
+
+    private fun isUdp443Rule(rule: JsonObject): Boolean {
+        if (rule.stringOrNull("port") != "443") return false
+        val network = rule.stringOrNull("network") ?: return false
+        return network.split(",").any { it.trim().equals("udp", ignoreCase = true) }
+    }
+
+    private fun metaQuicProxyRule(tags: OutboundTags): JsonObject = JsonObject().apply {
+        addProperty("type", "field")
+        addProperty("network", "udp")
+        addProperty("port", "443")
+        add("ip", JsonArray().apply { FACEBOOK_PROXY_IP.forEach { add(it) } })
+        addProperty("outboundTag", tags.proxy)
+    }
+
+    private fun isPortOnlyRule(rule: JsonObject): Boolean {
+        if (rule.has("domain") || rule.has("ip") || rule.has("inboundTag") ||
+            rule.has("balancerTag") || rule.has("process")
+        ) {
+            return false
+        }
+        return rule.has("port")
     }
 
     private fun routePriority(routeTag: String): Int? =

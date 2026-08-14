@@ -1,10 +1,10 @@
 package com.v2ray.ang.core
 
+import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.Base64
 
 class WinterRoutingProfilesTest {
     @Test
@@ -42,10 +42,12 @@ class WinterRoutingProfilesTest {
               }
             }
         """.trimIndent()
-        val encoded = Base64.getUrlEncoder().withoutPadding()
-            .encodeToString(payload.toByteArray(Charsets.UTF_8))
-        val bundle = WinterRoutingProfiles.parseHeader("base64:$encoded")
-        assertNotNull(bundle)
+        val root = JsonParser.parseString(payload).asJsonObject
+        assertTrue(root.has("default"))
+        assertTrue(root.has("whitelist"))
+        assertNotNull(WinterRoutingProfiles.profileFromJson(root.getAsJsonObject("default")))
+        val bundle = WinterRoutingProfiles.parseHeader(payload)
+        assertNotNull("raw JSON header must parse, keys=${root.keySet()}", bundle)
         assertEquals(5, bundle!!.whitelistMinPriority)
         assertEquals("RoscomVPN", bundle.defaultProfile.name)
         assertTrue(bundle.defaultProfile.directSites.any { it.contains("category-ru") })

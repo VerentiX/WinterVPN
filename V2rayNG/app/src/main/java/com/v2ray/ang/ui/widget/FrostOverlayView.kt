@@ -2,17 +2,19 @@ package com.v2ray.ang.ui.widget
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
-import android.view.animation.DecelerateInterpolator
+import android.view.animation.PathInterpolator
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -51,14 +53,16 @@ class FrostOverlayView @JvmOverloads constructor(
     private val washPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val crackCorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.BUTT
+        strokeJoin = Paint.Join.MITER
+        strokeMiter = 3.5f
         color = 0xFFF8FDFF.toInt()
     }
     private val crackMidPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.BUTT
+        strokeJoin = Paint.Join.MITER
+        strokeMiter = 3.5f
         color = 0xD8D4EEFF.toInt()
     }
     private val crackGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -69,14 +73,16 @@ class FrostOverlayView @JvmOverloads constructor(
     }
     private val crackDeepPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.BUTT
+        strokeJoin = Paint.Join.MITER
+        strokeMiter = 3.5f
         color = 0x66101828.toInt()
     }
     private val crackRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.BUTT
+        strokeJoin = Paint.Join.MITER
+        strokeMiter = 3.5f
         color = 0xAAE8F6FF.toInt()
     }
     private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -96,19 +102,40 @@ class FrostOverlayView @JvmOverloads constructor(
     private var originY = 0f
     private var progress = 0f
     private var animator: ValueAnimator? = null
+    private var paused = false
 
     /** Cracks must stay above this Y (top of connection-check card). */
     private var crackBottomY = 0f
     private val crackZone = RectF()
     private var edgePadding = 0f
     private val tmpPath = Path()
-    private val starPath = Path()
+    private val rimPath = Path()
+
+    // Cached wash shaders — rebuilt only when origin/size change.
+    private var bloomShader: RadialGradient? = null
+    private var coreShader: RadialGradient? = null
+    private var vignetteShader: RadialGradient? = null
+    private var washCacheW = -1
+    private var washCacheH = -1
+    private var washCacheOx = Float.NaN
+    private var washCacheOy = Float.NaN
+    private var washCacheRadius = Float.NaN
+
+    /** Frozen plate baked once — idle connected state costs one blit, not hundreds of paths. */
+    private var snapshot: Bitmap? = null
+    private val snapshotPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val snapshotDst = RectF()
+    private val snapshotSrc = Rect()
+    /** Half-res bake — ~4× less pixels, FILTER upscale still looks soft/icy. */
+    private val bakeScale = 0.5f
 
     init {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         isClickable = false
         isFocusable = false
         alpha = 0f
+        // No permanent HW layer — it held a huge GraphicBuffer while snow composited on top.
+        setLayerType(LAYER_TYPE_NONE, null)
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean = false
@@ -117,10 +144,16 @@ class FrostOverlayView @JvmOverloads constructor(
 
     fun setFrozenImmediate(frozen: Boolean, source: View? = null, clipTo: View? = null) {
         animator?.cancel()
+        paused = false
         if (source != null) updateBounds(source, clipTo)
         progress = if (frozen) 1f else 0f
         alpha = if (frozen) 1f else 0f
         visibility = if (frozen) VISIBLE else INVISIBLE
+        if (frozen) {
+            post { captureSnapshot() }
+        } else {
+            clearSnapshot()
+        }
         invalidate()
     }
 
@@ -133,7 +166,20 @@ class FrostOverlayView @JvmOverloads constructor(
     }
 
     fun melt() {
+        clearSnapshot()
         animateTo(0f, freeze = false)
+    }
+
+    fun pause() {
+        if (paused) return
+        paused = true
+        animator?.pause()
+    }
+
+    fun resume() {
+        if (!paused) return
+        paused = false
+        animator?.resume()
     }
 
     private fun updateBounds(source: View, clipTo: View?) {
@@ -156,22 +202,29 @@ class FrostOverlayView @JvmOverloads constructor(
         }
         crackBottomY = crackBottomY.coerceIn(originY + dp(40f), height * 0.55f)
 
-        originX = originX.coerceIn(edgePadding, width - edgePadding)
-        originY = originY.coerceIn(edgePadding, crackBottomY - edgePadding)
-        crackZone.set(0f, 0f, width.toFloat(), crackBottomY)
+        // Keep the epicenter on-screen; cracks themselves may run past the edges.
+        originX = originX.coerceIn(0f, width.toFloat())
+        originY = originY.coerceIn(0f, crackBottomY)
+        // Clip only below the card — left/right/top are open so fissures can exit the screen.
+        crackZone.set(-dp(120f), -dp(120f), width + dp(120f), crackBottomY)
 
         if (width > 0) rebuildPattern()
     }
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
 
+    /** How far past the visible screen cracks may continue (then get clipped by the view). */
+    private fun edgeOverflow(): Float = dp(110f)
+
     private fun maxDistInDirection(angle: Float): Float {
         val dx = cos(angle)
         val dy = sin(angle)
         var limit = Float.POSITIVE_INFINITY
-        val left = edgePadding
-        val right = width - edgePadding
-        val top = edgePadding
+        val overflow = edgeOverflow()
+        // Allow left / right / top to run past the screen; keep the card clear below.
+        val left = -overflow
+        val right = width + overflow
+        val top = -overflow
         val bottom = crackBottomY - edgePadding
         if (dx > 1e-4f) limit = min(limit, (right - originX) / dx)
         if (dx < -1e-4f) limit = min(limit, (left - originX) / dx)
@@ -184,9 +237,10 @@ class FrostOverlayView @JvmOverloads constructor(
         val dx = cos(angle)
         val dy = sin(angle)
         var limit = Float.POSITIVE_INFINITY
-        val left = edgePadding
-        val right = width - edgePadding
-        val top = edgePadding
+        val overflow = edgeOverflow()
+        val left = -overflow
+        val right = width + overflow
+        val top = -overflow
         val bottom = crackBottomY - edgePadding
         if (dx > 1e-4f) limit = min(limit, (right - x) / dx)
         if (dx < -1e-4f) limit = min(limit, (left - x) / dx)
@@ -197,6 +251,8 @@ class FrostOverlayView @JvmOverloads constructor(
 
     private fun animateTo(target: Float, freeze: Boolean) {
         animator?.cancel()
+        paused = false
+        if (freeze) clearSnapshot()
         if (width == 0 || height == 0) {
             post { animateTo(target, freeze) }
             return
@@ -206,12 +262,26 @@ class FrostOverlayView @JvmOverloads constructor(
         visibility = VISIBLE
         val start = progress
         animator = ValueAnimator.ofFloat(start, target).apply {
-            duration = if (freeze) 1_850L else 1_000L
-            interpolator = if (freeze) DecelerateInterpolator(1.2f) else AccelerateDecelerateInterpolator()
+            // Slightly snappier freeze — fewer frames of heavy crack draw.
+            duration = if (freeze) 1_800L else 850L
+            interpolator = if (freeze) {
+                PathInterpolator(0.12f, 0.7f, 0.2f, 1f)
+            } else {
+                AccelerateDecelerateInterpolator()
+            }
+            var lastDrawNs = 0L
             addUpdateListener {
+                if (paused) return@addUpdateListener
                 progress = it.animatedValue as Float
                 alpha = if (freeze) min(1f, 0.2f + progress * 0.9f) else progress
-                invalidate()
+                // ~30 FPS is enough for growing cracks — still reads as smooth ice.
+                val now = System.nanoTime()
+                if (lastDrawNs == 0L || now - lastDrawNs >= 33_333_333L ||
+                    progress >= 0.995f || progress <= 0.01f
+                ) {
+                    lastDrawNs = now
+                    invalidate()
+                }
             }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
@@ -219,6 +289,10 @@ class FrostOverlayView @JvmOverloads constructor(
                         visibility = INVISIBLE
                         progress = 0f
                         alpha = 0f
+                        clearSnapshot()
+                    } else if (freeze && target >= 0.99f) {
+                        // Bake the finished ice plate so idle connected state stays free.
+                        captureSnapshot()
                     }
                 }
             })
@@ -234,13 +308,17 @@ class FrostOverlayView @JvmOverloads constructor(
         }
         if (crackBottomY <= 0f) crackBottomY = h * 0.42f
         edgePadding = dp(12f)
-        crackZone.set(0f, 0f, w.toFloat(), crackBottomY)
+        crackZone.set(-dp(120f), -dp(120f), w + dp(120f), crackBottomY)
+        bloomShader = null
+        coreShader = null
+        vignetteShader = null
+        clearSnapshot()
         rebuildPattern()
     }
 
     private fun rebuildPattern() {
         if (width <= 0 || crackBottomY <= edgePadding * 2) return
-        val rnd = Random(131)
+        val rnd = Random(System.nanoTime().toInt() xor 0x5F3759DF)
         val built = buildCracks(rnd)
         cracks = built.first
         junctions = built.second
@@ -248,111 +326,117 @@ class FrostOverlayView @JvmOverloads constructor(
     }
 
     private fun buildSparkles(rnd: Random): List<CrackPoint> {
-        val list = ArrayList<CrackPoint>(32)
-        repeat(32) {
+        val list = ArrayList<CrackPoint>(28)
+        repeat(28) {
             val a = rnd.nextFloat() * Math.PI.toFloat() * 2f
             val maxLen = maxDistInDirection(a)
             if (maxLen < dp(20f)) return@repeat
-            val d = maxLen * (0.15f + rnd.nextFloat() * 0.75f)
+            val d = maxLen * (0.12f + rnd.nextFloat() * 0.78f)
             list += CrackPoint(originX + cos(a) * d, originY + sin(a) * d)
         }
         return list
     }
 
     private fun buildCracks(rnd: Random): Pair<List<Crack>, List<Junction>> {
-        val result = ArrayList<Crack>(56)
-        val nodes = ArrayList<Junction>(28)
-        val mainCount = 11
+        val result = ArrayList<Crack>(96)
+        val nodes = ArrayList<Junction>(40)
 
-        // Tiny star burst at origin — sells the shatter epicenter
-        val burst = 6
+        // Impact burst — short, chaotic shards from the epicenter.
+        val burst = 10
         for (i in 0 until burst) {
-            val a = i * (Math.PI.toFloat() * 2f / burst) + 0.2f
-            val len = dp(18f) + rnd.nextFloat() * dp(14f)
-            val pts = buildCrystallineRay(originX, originY, a, len, 3, rnd, sharp = true)
+            val a = i * (Math.PI.toFloat() * 2f / burst) +
+                (rnd.nextFloat() - 0.5f) * 0.55f
+            val len = dp(18f) + rnd.nextFloat() * dp(22f)
+            val pts = buildIceFissure(originX, originY, a, len, 7 + rnd.nextInt(4), rnd)
             if (pts.size >= 2) {
                 result += Crack(
                     points = pts,
-                    width = dp(1.8f) + rnd.nextFloat() * dp(0.8f),
-                    delay = i * 0.012f,
+                    width = dp(1.6f) + rnd.nextFloat() * dp(1.1f),
+                    delay = i * 0.006f,
                     branch = false,
-                    taper = 0.25f
+                    taper = 0.15f
                 )
             }
         }
-        nodes += Junction(originX, originY, 0f, dp(3.2f))
+        nodes += Junction(originX, originY, 0f, dp(4.2f))
 
+        // Long primary fractures — uneven angles, lightning-like wander.
+        val mainCount = 8
+        var angleCursor = rnd.nextFloat() * 0.4f
         for (i in 0 until mainCount) {
-            // Even radial layout with crystalline jitter
-            val baseAngle = (i + 0.5f) / mainCount * (Math.PI.toFloat() * 2f) +
-                (rnd.nextFloat() - 0.5f) * 0.1f
+            val span = (Math.PI.toFloat() * 2f / mainCount) * (0.7f + rnd.nextFloat() * 0.7f)
+            angleCursor += span
+            val baseAngle = angleCursor + (rnd.nextFloat() - 0.5f) * 0.35f
             val maxLen = maxDistInDirection(baseAngle)
-            if (maxLen < dp(40f)) continue
+            if (maxLen < dp(48f)) continue
 
-            val targetLen = maxLen * (0.86f + rnd.nextFloat() * 0.12f)
-            val segments = 8 + rnd.nextInt(5)
-            val points = buildCrystallineRay(
-                originX, originY, baseAngle, targetLen, segments, rnd, sharp = true
+            val targetLen = maxLen * (0.78f + rnd.nextFloat() * 0.2f)
+            val segments = 16 + rnd.nextInt(10)
+            val points = buildIceFissure(
+                originX, originY, baseAngle, targetLen, segments, rnd
             )
-            if (points.size < 3) continue
+            if (points.size < 4) continue
 
-            val mainWidth = dp(2.6f) + rnd.nextFloat() * dp(2.2f)
+            val mainWidth = dp(1.4f) + rnd.nextFloat() * dp(1.8f)
+            val mainDelay = 0.015f + i * 0.016f
             result += Crack(
                 points = points,
                 width = mainWidth,
-                delay = 0.03f + i * 0.02f,
+                delay = mainDelay,
                 branch = false,
-                taper = 0.32f + rnd.nextFloat() * 0.18f
+                taper = 0.18f + rnd.nextFloat() * 0.28f
             )
 
-            // Primary forks — prefer ~60° crystalline angles
-            val forks = if (points.size > 6) 2 else 1
+            // Organic forks — not fixed 60° lattice spokes.
+            val forks = 1 + rnd.nextInt(3)
             repeat(forks) { fork ->
-                val fromIndex = ((0.32f + fork * 0.28f) * (points.size - 1)).toInt()
+                val fromIndex = ((0.22f + fork * 0.2f + rnd.nextFloat() * 0.12f) * (points.size - 1))
+                    .toInt()
                     .coerceIn(2, points.size - 2)
                 val from = points[fromIndex]
+                val prev = points[fromIndex - 1]
+                val along = kotlin.math.atan2(from.y - prev.y, from.x - prev.x)
                 val side = if ((i + fork) % 2 == 0) 1f else -1f
-                val crystal = (0.95f + rnd.nextFloat() * 0.25f) * side // ~55–70°
-                val dir = baseAngle + crystal + (rnd.nextFloat() - 0.5f) * 0.18f
+                val dir = along + side * (0.55f + rnd.nextFloat() * 0.95f) +
+                    (rnd.nextFloat() - 0.5f) * 0.25f
                 val branchMax = remainingDistFrom(from.x, from.y, dir)
-                if (branchMax < dp(22f)) return@repeat
-                val branchLen = branchMax * (0.48f + rnd.nextFloat() * 0.38f)
-                val branchPts = buildCrystallineRay(
-                    from.x, from.y, dir, branchLen, 5 + rnd.nextInt(3), rnd, sharp = true
+                if (branchMax < dp(20f)) return@repeat
+                val branchLen = branchMax * (0.35f + rnd.nextFloat() * 0.45f)
+                val branchPts = buildIceFissure(
+                    from.x, from.y, dir, branchLen, 10 + rnd.nextInt(6), rnd
                 )
-                if (branchPts.size < 2) return@repeat
+                if (branchPts.size < 3) return@repeat
 
-                val branchDelay = 0.07f + i * 0.022f + fork * 0.035f
-                val branchWidth = mainWidth * (0.45f + rnd.nextFloat() * 0.25f)
+                val branchDelay = mainDelay + 0.04f + fork * 0.035f + rnd.nextFloat() * 0.04f
+                val branchWidth = mainWidth * (0.38f + rnd.nextFloat() * 0.28f)
                 result += Crack(
                     points = listOf(from) + branchPts.drop(1),
                     width = branchWidth,
                     delay = branchDelay,
                     branch = true,
-                    taper = 0.28f
+                    taper = 0.2f
                 )
-                nodes += Junction(from.x, from.y, branchDelay, branchWidth * 0.55f)
+                nodes += Junction(from.x, from.y, branchDelay, branchWidth * 0.65f)
 
-                // Tiny twig off the fork
-                if (branchPts.size > 3 && rnd.nextFloat() > 0.35f) {
-                    val twigFrom = branchPts[branchPts.size / 2]
-                    val twigDir = dir + side * -(0.7f + rnd.nextFloat() * 0.35f)
+                // Tiny hairline splinter.
+                if (branchPts.size > 5 && rnd.nextFloat() > 0.4f) {
+                    val twigFrom = branchPts[(branchPts.size * (0.4f + rnd.nextFloat() * 0.35f)).toInt()
+                        .coerceAtMost(branchPts.lastIndex)]
+                    val twigDir = dir + side * -(0.7f + rnd.nextFloat() * 0.7f)
                     val twigMax = remainingDistFrom(twigFrom.x, twigFrom.y, twigDir)
-                    if (twigMax > dp(16f)) {
-                        val twigLen = twigMax * (0.3f + rnd.nextFloat() * 0.3f)
-                        val twigPts = buildCrystallineRay(
-                            twigFrom.x, twigFrom.y, twigDir, twigLen, 3 + rnd.nextInt(2), rnd, sharp = false
+                    if (twigMax > dp(14f)) {
+                        val twigPts = buildIceFissure(
+                            twigFrom.x, twigFrom.y, twigDir,
+                            twigMax * (0.22f + rnd.nextFloat() * 0.3f),
+                            6 + rnd.nextInt(4), rnd
                         )
                         if (twigPts.size >= 2) {
                             result += Crack(
                                 points = listOf(twigFrom) + twigPts.drop(1),
-                                width = branchWidth * 0.55f,
+                                width = branchWidth * 0.45f,
                                 delay = branchDelay + 0.05f,
                                 branch = true,
-                                taper = 0.22f
-                            )
-                            nodes += Junction(
-                                twigFrom.x, twigFrom.y, branchDelay + 0.05f, branchWidth * 0.35f
+                                taper = 0.25f
                             )
                         }
                     }
@@ -360,22 +444,20 @@ class FrostOverlayView @JvmOverloads constructor(
             }
         }
 
-        // Fine hairlines for ice grain
-        val fine = 12
-        for (i in 0 until fine) {
-            val angle = (i + 0.35f) / fine * (Math.PI.toFloat() * 2f) + 0.11f
+        // Fine hairline web in the ice plate.
+        for (i in 0 until 14) {
+            val angle = rnd.nextFloat() * Math.PI.toFloat() * 2f
             val maxLen = maxDistInDirection(angle)
-            if (maxLen < dp(34f)) continue
-            val startD = maxLen * (0.16f + rnd.nextFloat() * 0.18f)
-            val len = maxLen * (0.32f + rnd.nextFloat() * 0.28f) - startD
-            if (len < dp(16f)) continue
+            if (maxLen < dp(32f)) continue
+            val startD = maxLen * (0.15f + rnd.nextFloat() * 0.35f)
+            val len = maxLen * (0.22f + rnd.nextFloat() * 0.32f)
             val start = CrackPoint(originX + cos(angle) * startD, originY + sin(angle) * startD)
-            val pts = buildCrystallineRay(start.x, start.y, angle, len, 4 + rnd.nextInt(2), rnd, sharp = false)
+            val pts = buildIceFissure(start.x, start.y, angle, len, 8 + rnd.nextInt(5), rnd)
             if (pts.size >= 2) {
                 result += Crack(
                     points = pts,
-                    width = dp(0.9f) + rnd.nextFloat() * dp(0.85f),
-                    delay = 0.16f + i * 0.025f,
+                    width = dp(0.55f) + rnd.nextFloat() * dp(0.55f),
+                    delay = 0.2f + i * 0.018f,
                     branch = true,
                     taper = 0.35f
                 )
@@ -385,42 +467,57 @@ class FrostOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * Ice-like ray: prefers crystalline turn angles (~60°) with sharp zig-zag.
+     * Lightning / frost fissure: short uneven steps, wander + sharp kinks,
+     * lateral jitter — avoids ruler-straight radial spokes.
      */
-    private fun buildCrystallineRay(
+    private fun buildIceFissure(
         startX: Float,
         startY: Float,
         startAngle: Float,
         length: Float,
         segments: Int,
-        rnd: Random,
-        sharp: Boolean
+        rnd: Random
     ): List<CrackPoint> {
         val points = ArrayList<CrackPoint>(segments + 1)
         points += CrackPoint(startX, startY)
         var x = startX
         var y = startY
-        var angle = startAngle
-        val step = length / segments
-        // Preferred fracture turns (radians) — hexagonal ice lattice feel
-        val turns = floatArrayOf(-1.05f, -0.62f, 0.62f, 1.05f)
-        repeat(segments) { s ->
-            val turnAmp = if (sharp) 0.55f + rnd.nextFloat() * 0.35f else 0.35f + rnd.nextFloat() * 0.25f
-            val crystal = turns[rnd.nextInt(turns.size)] * turnAmp
-            val noise = (rnd.nextFloat() - 0.5f) * 0.14f
-            // Alternate bias keeps a lively zig-zag without scribbling
-            val zig = if (s % 2 == 0) 0.08f else -0.08f
-            angle += crystal * 0.42f + noise + zig
+        var angle = startAngle + (rnd.nextFloat() - 0.5f) * 0.2f
+        var wander = 0f
+        var kinkCooldown = 1 + rnd.nextInt(2)
+        val baseStep = length / segments.coerceAtLeast(1)
 
+        repeat(segments) { s ->
+            wander += (rnd.nextFloat() - 0.5f) * 0.55f
+            wander *= 0.72f
+
+            kinkCooldown--
+            if (kinkCooldown <= 0 && rnd.nextFloat() > 0.55f) {
+                val kink = (0.4f + rnd.nextFloat() * 0.95f) * if (rnd.nextBoolean()) 1f else -1f
+                angle += kink
+                kinkCooldown = 2 + rnd.nextInt(4)
+            } else {
+                // Soft bias back toward the intended radial so cracks still fan out.
+                angle += (startAngle - angle) * 0.07f + wander * 0.35f
+            }
+
+            val move = baseStep * (0.55f + rnd.nextFloat() * 0.9f)
             val allowed = remainingDistFrom(x, y, angle)
-            // Slightly uneven segment lengths → more organic shatter
-            val uneven = 0.72f + rnd.nextFloat() * 0.5f
-            val move = min(step * uneven, allowed * 0.96f)
-            if (move < dp(1.4f)) return@repeat
-            x += cos(angle) * move
-            y += sin(angle) * move
-            x = x.coerceIn(edgePadding, width - edgePadding)
-            y = y.coerceIn(edgePadding, crackBottomY - edgePadding)
+            val advance = min(move, allowed * 0.96f)
+            if (advance < dp(0.9f)) return@repeat
+
+            val px = -sin(angle)
+            val py = cos(angle)
+            val lateral = (rnd.nextFloat() - 0.5f) * dp(3.2f) * (0.4f + s / segments.toFloat())
+
+            x += cos(angle) * advance + px * lateral
+            y += sin(angle) * advance + py * lateral
+
+            if (y > crackBottomY - edgePadding) {
+                y = crackBottomY - edgePadding
+                points += CrackPoint(x, y)
+                return@repeat
+            }
             points += CrackPoint(x, y)
         }
         return points
@@ -430,24 +527,115 @@ class FrostOverlayView @JvmOverloads constructor(
         super.onDraw(canvas)
         if (progress <= 0.001f || width == 0 || height == 0) return
 
-        val spread = easeOutQuart(progress)
+        val baked = snapshot
+        if (baked != null && !baked.isRecycled && progress >= 0.995f) {
+            snapshotSrc.set(0, 0, baked.width, baked.height)
+            snapshotDst.set(0f, 0f, width.toFloat(), height.toFloat())
+            canvas.drawBitmap(baked, snapshotSrc, snapshotDst, snapshotPaint)
+            return
+        }
 
-        // ---- Full-screen frost wash (balanced icy veil) ----
+        drawFrostScene(canvas, progress)
+    }
+
+    private fun captureSnapshot() {
+        if (width <= 0 || height <= 0) return
+        clearSnapshot()
+        val bw = (width * bakeScale).toInt().coerceAtLeast(1)
+        val bh = (height * bakeScale).toInt().coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.scale(bakeScale, bakeScale)
+        val old = progress
+        progress = 1f
+        drawFrostScene(c, 1f)
+        progress = old
+        snapshot = bmp
+        // Static plate — leave the compositing stack as a cheap scaled blit.
+        invalidate()
+    }
+
+    private fun clearSnapshot() {
+        snapshot?.recycle()
+        snapshot = null
+    }
+
+    private fun drawFrostScene(canvas: Canvas, t: Float) {
+        val spread = easeOutQuart(t)
         val fullRadius = hypot(width.toDouble(), height.toDouble()).toFloat() * 1.08f
         val radius = fullRadius * spread
+        ensureWashShaders(radius)
 
-        // Soft cool haze — slightly darker freeze mood
+        // Soft cool haze
         washPaint.shader = null
         washPaint.color = 0xFF141C2E.toInt()
         washPaint.alpha = (spread * 112).toInt().coerceIn(0, 112)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), washPaint)
         washPaint.alpha = 255
 
-        // Cool bloom from the button
-        washPaint.shader = RadialGradient(
-            originX,
-            originY,
-            max(1f, radius),
+        washPaint.shader = bloomShader
+        canvas.drawCircle(originX, originY, radius, washPaint)
+
+        washPaint.shader = coreShader
+        canvas.drawCircle(originX, originY, radius * 0.38f, washPaint)
+
+        washPaint.shader = vignetteShader
+        washPaint.alpha = (spread * 195).toInt()
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), washPaint)
+        washPaint.alpha = 255
+
+        canvas.save()
+        canvas.clipRect(crackZone)
+
+        for (crack in cracks) {
+            drawCrack(canvas, crack, spread)
+        }
+
+        for (node in junctions) {
+            val local = ((t - node.delay) / (1f - node.delay).coerceAtLeast(0.25f))
+                .coerceIn(0f, 1f)
+            if (local < 0.12f) continue
+            val pulse = 0.55f + 0.45f * sin(t * 6.5f + node.x * 0.04f)
+            junctionPaint.color = 0xFFF5FBFF.toInt()
+            junctionPaint.alpha = (local * spread * pulse * 175).toInt().coerceIn(0, 200)
+            canvas.drawCircle(node.x, node.y, node.size * (0.55f + pulse * 0.4f), junctionPaint)
+        }
+
+        if (t < 0.995f) {
+            val rLimit = radius * 0.9f
+            val rLimitSq = rLimit * rLimit
+            for (spark in sparkles) {
+                if (spark.y > crackBottomY) continue
+                val dx = spark.x - originX
+                val dy = spark.y - originY
+                if (dx * dx + dy * dy > rLimitSq) continue
+                val twinkle = 0.35f + 0.65f * sin(t * 9f + spark.x * 0.035f + spark.y * 0.02f)
+                sparkPaint.alpha = (twinkle * spread * 115).toInt().coerceIn(0, 130)
+                canvas.drawCircle(spark.x, spark.y, 1.1f + twinkle * 1.0f, sparkPaint)
+            }
+        }
+
+        canvas.restore()
+    }
+
+    private fun ensureWashShaders(radius: Float) {
+        val w = width
+        val h = height
+        val needRebuild = bloomShader == null ||
+            washCacheW != w || washCacheH != h ||
+            abs(washCacheOx - originX) > 0.5f ||
+            abs(washCacheOy - originY) > 0.5f ||
+            abs(washCacheRadius - radius) > max(4f, radius * 0.02f)
+        if (!needRebuild) return
+
+        washCacheW = w
+        washCacheH = h
+        washCacheOx = originX
+        washCacheOy = originY
+        washCacheRadius = radius
+
+        bloomShader = RadialGradient(
+            originX, originY, max(1f, radius),
             intArrayOf(
                 0x5578A0C0.toInt(),
                 0x446088A8.toInt(),
@@ -458,86 +646,26 @@ class FrostOverlayView @JvmOverloads constructor(
             floatArrayOf(0f, 0.28f, 0.55f, 0.82f, 1f),
             Shader.TileMode.CLAMP
         )
-        canvas.drawCircle(originX, originY, radius, washPaint)
-
-        // Soft icy core near the button
-        washPaint.shader = RadialGradient(
-            originX,
-            originY,
-            max(1f, radius * 0.38f),
+        coreShader = RadialGradient(
+            originX, originY, max(1f, radius * 0.38f),
             intArrayOf(0x4488B0C8.toInt(), 0x28385870.toInt(), 0x00000000),
             floatArrayOf(0f, 0.52f, 1f),
             Shader.TileMode.CLAMP
         )
-        canvas.drawCircle(originX, originY, radius * 0.38f, washPaint)
-
-        // Moderate cool vignette
-        washPaint.shader = RadialGradient(
-            width / 2f,
-            height / 2f,
-            hypot(width / 2.0, height / 2.0).toFloat(),
+        vignetteShader = RadialGradient(
+            w / 2f, h / 2f,
+            hypot(w / 2.0, h / 2.0).toFloat(),
             intArrayOf(0x00000000, 0x30101828.toInt(), 0x60100818.toInt()),
             floatArrayOf(0f, 0.52f, 1f),
             Shader.TileMode.CLAMP
         )
-        washPaint.alpha = (spread * 195).toInt()
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), washPaint)
-        washPaint.alpha = 255
-
-        // ---- Cracks only above connection check ----
-        canvas.save()
-        canvas.clipRect(crackZone)
-
-        for (crack in cracks) {
-            drawCrack(canvas, crack, spread)
-        }
-
-        // Glints at fracture junctions
-        for (node in junctions) {
-            val local = ((progress - node.delay) / (1f - node.delay).coerceAtLeast(0.25f))
-                .coerceIn(0f, 1f)
-            if (local < 0.15f) continue
-            val pulse = 0.55f + 0.45f * sin(progress * 7f + node.x * 0.04f)
-            junctionPaint.alpha = (local * spread * pulse * 160).toInt().coerceIn(0, 180)
-            canvas.drawCircle(node.x, node.y, node.size * (0.7f + pulse * 0.35f), junctionPaint)
-            drawStarSpark(canvas, node.x, node.y, node.size * 1.8f, junctionPaint.alpha)
-        }
-
-        for (spark in sparkles) {
-            if (spark.y > crackBottomY) continue
-            val dist = hypot((spark.x - originX).toDouble(), (spark.y - originY).toDouble()).toFloat()
-            if (dist > radius * 0.9f) continue
-            val twinkle = 0.35f + 0.65f * sin(progress * 9f + spark.x * 0.035f + spark.y * 0.02f)
-            sparkPaint.alpha = (twinkle * spread * 115).toInt().coerceIn(0, 130)
-            canvas.drawCircle(spark.x, spark.y, 1.1f + twinkle * 1.0f, sparkPaint)
-        }
-
-        canvas.restore()
-    }
-
-    private fun drawStarSpark(canvas: Canvas, cx: Float, cy: Float, size: Float, alpha: Int) {
-        if (alpha < 8) return
-        starPath.rewind()
-        val r = size
-        val ir = size * 0.28f
-        for (i in 0 until 4) {
-            val a = i * (Math.PI.toFloat() / 2f) - Math.PI.toFloat() / 4f
-            val ox = cos(a) * r
-            val oy = sin(a) * r
-            val ix = cos(a + Math.PI.toFloat() / 4f) * ir
-            val iy = sin(a + Math.PI.toFloat() / 4f) * ir
-            if (i == 0) starPath.moveTo(cx + ox, cy + oy) else starPath.lineTo(cx + ox, cy + oy)
-            starPath.lineTo(cx + ix, cy + iy)
-        }
-        starPath.close()
-        sparkPaint.alpha = (alpha * 0.85f).toInt().coerceIn(0, 200)
-        canvas.drawPath(starPath, sparkPaint)
     }
 
     private fun drawCrack(canvas: Canvas, crack: Crack, spread: Float) {
         if (crack.points.size < 2) return
 
-        val localProgress = ((progress - crack.delay) / (1f - crack.delay).coerceAtLeast(0.28f))
+        val window = if (crack.branch) 0.42f else 0.32f
+        val localProgress = ((progress - crack.delay) / (1f - crack.delay).coerceAtLeast(window))
             .coerceIn(0f, 1f)
         if (localProgress <= 0.001f) return
 
@@ -560,132 +688,109 @@ class FrostOverlayView @JvmOverloads constructor(
             endY = last.y
         }
 
+        // Sharp polyline — miter joins keep the lightning corners.
         tmpPath.rewind()
         tmpPath.moveTo(crack.points[0].x, crack.points[0].y)
-        when {
-            whole <= 0 -> tmpPath.lineTo(endX, endY)
-            whole == 1 -> tmpPath.quadTo(crack.points[1].x, crack.points[1].y, endX, endY)
-            else -> {
-                val p1 = crack.points[1]
-                tmpPath.lineTo(
-                    (crack.points[0].x + p1.x) * 0.5f,
-                    (crack.points[0].y + p1.y) * 0.5f
-                )
-                for (i in 1 until whole) {
-                    val cur = crack.points[i]
-                    val next = crack.points[i + 1]
-                    tmpPath.quadTo(
-                        cur.x, cur.y,
-                        (cur.x + next.x) * 0.5f,
-                        (cur.y + next.y) * 0.5f
-                    )
-                }
-                tmpPath.quadTo(crack.points[whole].x, crack.points[whole].y, endX, endY)
-            }
+        for (i in 1..whole) {
+            val p = crack.points[i]
+            tmpPath.lineTo(p.x, p.y)
+        }
+        if (whole < totalSegments && frac > 0.01f) {
+            tmpPath.lineTo(endX, endY)
+        } else if (whole == 0) {
+            tmpPath.lineTo(endX, endY)
         }
 
-        val alphaScale = if (crack.branch) 0.8f else 1f
-        val tipBoost = 0.62f + 0.38f * grow
-        val avgTaper = 0.55f + crack.taper * 0.45f
+        val alphaScale = if (crack.branch) 0.78f else 1f
+        val tipBoost = 0.7f + 0.3f * grow
+        val deepW = crack.width * (0.95f + (1f - crack.taper) * 0.2f)
 
-        crackGlowPaint.color = 0x77C4F0FF.toInt()
-        crackGlowPaint.strokeWidth = crack.width * 4.6f * avgTaper
-        crackGlowPaint.alpha = (grow * spread * tipBoost * 92 * alphaScale).toInt().coerceIn(0, 118)
+        // Soft bloom under the fissure.
+        crackGlowPaint.color = 0x44A8D8F0.toInt()
+        crackGlowPaint.strokeWidth = deepW * (if (crack.branch) 2.4f else 3.1f)
+        crackGlowPaint.alpha = (grow * spread * tipBoost * 55 * alphaScale).toInt().coerceIn(0, 80)
         canvas.drawPath(tmpPath, crackGlowPaint)
 
-        crackDeepPaint.strokeWidth = crack.width * 1.75f * avgTaper
-        crackDeepPaint.alpha = (grow * spread * 155 * alphaScale).toInt().coerceIn(0, 175)
+        // Dark crack body.
+        crackDeepPaint.color = 0xFF071420.toInt()
+        crackDeepPaint.strokeWidth = deepW
+        crackDeepPaint.alpha = (grow * spread * 210 * alphaScale).toInt().coerceIn(0, 230)
         canvas.drawPath(tmpPath, crackDeepPaint)
 
-        crackMidPaint.color = 0xE0D8F2FF.toInt()
-        crackMidPaint.strokeWidth = crack.width * 0.95f * avgTaper
-        crackMidPaint.alpha = (grow * spread * 230 * alphaScale).toInt().coerceIn(0, 240)
+        // Bright frost slit.
+        crackMidPaint.color = 0xFFF2FAFF.toInt()
+        crackMidPaint.strokeWidth = deepW * 0.38f
+        crackMidPaint.alpha = (grow * spread * 250 * alphaScale).toInt().coerceIn(0, 255)
         canvas.drawPath(tmpPath, crackMidPaint)
 
-        crackCorePaint.color = 0xFFFCFEFF.toInt()
-        crackCorePaint.strokeWidth = crack.width * 0.32f * avgTaper
-        crackCorePaint.alpha = (grow * spread * 255 * alphaScale).toInt().coerceIn(0, 255)
-        canvas.drawPath(tmpPath, crackCorePaint)
-
-        drawTaperedSegments(canvas, crack, whole, frac, endX, endY, grow, spread, alphaScale)
-
-        if (!crack.branch && grow > 0.28f && whole >= 2) {
-            val chipCount = min(whole, 5)
-            for (i in 1..chipCount) {
-                val t = i.toFloat() / (chipCount + 1)
-                val idx = (t * whole).toInt().coerceIn(1, whole)
-                val p = crack.points[idx]
-                val prev = crack.points[idx - 1]
-                val dx = p.x - prev.x
-                val dy = p.y - prev.y
-                val len = hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(1f)
-                val nx = -dy / len
-                val ny = dx / len
-                val side = if (i % 2 == 0) 1f else -1f
-                val wFade = 1f - t * (1f - crack.taper)
-                val chipLen = crack.width * (2.1f + i * 0.4f) * wFade
-                val chipAlpha = (grow * spread * (150 - i * 12) * alphaScale).toInt().coerceIn(0, 170)
-
-                crackRimPaint.alpha = (chipAlpha * 0.45f).toInt()
-                crackRimPaint.strokeWidth = crack.width * 0.45f
-                canvas.drawLine(
-                    p.x, p.y,
-                    p.x + nx * side * chipLen * 0.85f,
-                    p.y + ny * side * chipLen * 0.85f,
-                    crackRimPaint
-                )
-                crackCorePaint.alpha = chipAlpha
-                crackCorePaint.strokeWidth = crack.width * 0.2f
-                canvas.drawLine(
-                    p.x, p.y,
-                    p.x + nx * side * chipLen,
-                    p.y + ny * side * chipLen,
-                    crackCorePaint
-                )
-            }
+        // Refraction rim — offset polyline, not a second parallel "ruler".
+        buildOffsetRim(crack, whole, frac, endX, endY, deepW * 0.32f)
+        if (!rimPath.isEmpty) {
+            crackRimPaint.color = 0xCCEAF6FF.toInt()
+            crackRimPaint.strokeWidth = deepW * 0.16f
+            crackRimPaint.alpha = (grow * spread * 150 * alphaScale).toInt().coerceIn(0, 180)
+            canvas.drawPath(rimPath, crackRimPaint)
         }
 
-        if (grow in 0.05f..0.97f) {
-            val tipA = ((1f - abs(grow - 0.7f)) * spread * 230).toInt().coerceIn(0, 235)
+        // Hairline core flash near the tip.
+        crackCorePaint.color = 0xFFFFFFFF.toInt()
+        crackCorePaint.strokeWidth = deepW * 0.14f
+        crackCorePaint.alpha = (grow * spread * 180 * alphaScale).toInt().coerceIn(0, 200)
+        canvas.drawPath(tmpPath, crackCorePaint)
+
+        if (grow in 0.04f..0.96f) {
+            val tipA = ((1f - abs(grow - 0.55f) * 1.4f).coerceIn(0.2f, 1f) * spread * 240).toInt()
+                .coerceIn(0, 245)
+            sparkPaint.color = 0xFFFFFFFF.toInt()
             sparkPaint.alpha = tipA
-            canvas.drawCircle(endX, endY, crack.width * 0.55f + dp(0.6f), sparkPaint)
-            drawStarSpark(canvas, endX, endY, crack.width * 1.1f + dp(1.2f), tipA)
+            canvas.drawCircle(endX, endY, deepW * 0.4f + dp(0.4f), sparkPaint)
         }
     }
 
-    private fun drawTaperedSegments(
-        canvas: Canvas,
+    private fun buildOffsetRim(
         crack: Crack,
         whole: Int,
         frac: Float,
         endX: Float,
         endY: Float,
-        grow: Float,
-        spread: Float,
-        alphaScale: Float
+        offset: Float
     ) {
-        val n = crack.points.size - 1
-        if (n < 1 || whole < 1) return
-        val segs = if (frac > 0.01f && whole < n) whole else whole.coerceAtLeast(1)
-        for (i in 0 until segs) {
-            val a = crack.points[i]
-            val b = if (i == whole && frac > 0.01f && whole < n) {
+        rimPath.rewind()
+        val n = if (whole < crack.points.size - 1 && frac > 0.01f) whole + 1 else whole
+        if (n < 1) return
+
+        var started = false
+        for (i in 0..n) {
+            val p = if (i == n && whole < crack.points.size - 1 && frac > 0.01f) {
                 CrackPoint(endX, endY)
             } else {
-                crack.points[(i + 1).coerceAtMost(crack.points.lastIndex)]
+                crack.points[i.coerceAtMost(crack.points.lastIndex)]
             }
-            val t = (i + 1f) / n
-            val w = crack.width * (1f - t * (1f - crack.taper))
-            crackCorePaint.strokeWidth = w * 0.28f
-            crackCorePaint.alpha = (grow * spread * (210 - t * 40) * alphaScale).toInt().coerceIn(0, 230)
-            canvas.drawLine(a.x, a.y, b.x, b.y, crackCorePaint)
+            val q = if (i == 0) {
+                crack.points[min(1, crack.points.lastIndex)]
+            } else if (i == n && whole < crack.points.size - 1 && frac > 0.01f) {
+                crack.points[whole]
+            } else {
+                crack.points[(i - 1).coerceAtLeast(0)]
+            }
+            val dx = p.x - q.x
+            val dy = p.y - q.y
+            val len = hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(0.001f)
+            val ox = -dy / len * offset
+            val oy = dx / len * offset
+            if (!started) {
+                rimPath.moveTo(p.x + ox, p.y + oy)
+                started = true
+            } else {
+                rimPath.lineTo(p.x + ox, p.y + oy)
+            }
         }
     }
 
-    /** Fast crack, soft landing. */
+    /** Snappy start (ice cracking), soft settle at the tip. */
     private fun fractureEase(t: Float): Float {
         val x = t.coerceIn(0f, 1f)
-        return 1f - (1f - x) * (1f - x) * (1f - x) * (1f - x)
+        return 1f - (1f - x).let { it * it * it * it * it }
     }
 
     private fun easeOutQuart(t: Float): Float {
@@ -695,6 +800,8 @@ class FrostOverlayView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         animator?.cancel()
+        paused = false
+        clearSnapshot()
         super.onDetachedFromWindow()
     }
 }

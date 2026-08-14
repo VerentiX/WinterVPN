@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/profile_row"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -57,15 +58,14 @@
 
     <ImageView
         android:id="@+id/view_profile_config"
-        android:layout_width="wrap_content"
+        android:layout_width="48dp"
         android:layout_height="48dp"
+        android:layout_marginEnd="4dp"
         android:background="?attr/selectableItemBackgroundBorderless"
         android:clickable="true"
         android:contentDescription="@string/title_view_config"
         android:focusable="true"
-        android:paddingStart="12dp"
-        android:paddingTop="12dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="12dp"
-        android:src="@drawable/ic_chevron_right_24dp" />
+        android:padding="10dp"
+        android:src="@drawable/ic_chevron_right_24dp"
+        app:tint="#B8E7FF" />
 </LinearLayout>

@@ -45,8 +45,10 @@ class RoscomPriorityRoutingTest {
                 "domain":["geosite:old-direct"],
                 "outboundTag":"direct"
               },
+              {"type":"field","network":"udp","port":"443","outboundTag":"block"},
               {"type":"field","inboundTag":["auto-proxy-in"],"balancerTag":"tier-s0000"},
-              {"type":"field","inboundTag":["chain-in-s0001"],"balancerTag":"tier-s0001"}
+              {"type":"field","inboundTag":["chain-in-s0001"],"balancerTag":"tier-s0001"},
+              {"type":"field","network":"tcp,udp","outboundTag":"proxy"}
             ],
             "balancers": [
               {"tag":"tier-s0000","selector":["route-p0000-a"],"fallbackTag":"chain-s0001","strategy":{"type":"leastLoad"}},
@@ -69,6 +71,14 @@ class RoscomPriorityRoutingTest {
         assertEquals(RoscomPriorityRouting.Mode.FULL, RoscomPriorityRouting.modeForRouteTag("route-p0004-x"))
         assertEquals(RoscomPriorityRouting.Mode.WHITELIST, RoscomPriorityRouting.modeForRouteTag("route-p0005-x"))
         assertEquals(RoscomPriorityRouting.Mode.WHITELIST, RoscomPriorityRouting.modeForRouteTag("route-p0012-y"))
+        assertEquals(
+            RoscomPriorityRouting.Mode.FULL,
+            RoscomPriorityRouting.profileModeForRouteTag("route-p0004-x"),
+        )
+        assertEquals(
+            RoscomPriorityRouting.Mode.WHITELIST,
+            RoscomPriorityRouting.profileModeForRouteTag("route-p0005-x"),
+        )
     }
 
     @Test
@@ -113,11 +123,40 @@ class RoscomPriorityRoutingTest {
                 .getAsJsonArray("selector").map { it.asString },
         )
         assertEquals(
-            "leastLoad",
+            "random",
             runtime.getAsJsonObject("routing")
                 .getAsJsonArray("balancers")[0].asJsonObject
                 .getAsJsonObject("strategy").get("type").asString,
         )
+        val inboundIndex = rules.indexOfFirst { element ->
+            element.asJsonObject.stringArray("inboundTag").contains("auto-proxy-in")
+        }
+        val metaQuicIndex = rules.indexOfFirst { element ->
+            val rule = element.asJsonObject
+            rule.stringOrNull("network") == "udp" &&
+                rule.stringOrNull("port") == "443" &&
+                rule.stringOrNull("outboundTag") == "proxy" &&
+                rule.has("ip") &&
+                rule.getAsJsonArray("ip").any { it.asString == "geoip:facebook" }
+        }
+        val quicBlockIndex = rules.indexOfFirst { element ->
+            val rule = element.asJsonObject
+            rule.stringOrNull("network") == "udp" &&
+                rule.stringOrNull("port") == "443" &&
+                rule.stringOrNull("outboundTag") == "block"
+        }
+        val youtubeIndex = rules.indexOfFirst { element ->
+            val rule = element.asJsonObject
+            rule.has("domain") &&
+                rule.getAsJsonArray("domain").any { it.asString.contains("youtube") }
+        }
+        assertTrue(inboundIndex >= 0)
+        assertTrue(metaQuicIndex >= 0)
+        assertTrue(quicBlockIndex >= 0)
+        assertTrue(youtubeIndex >= 0)
+        assertTrue(inboundIndex < metaQuicIndex)
+        assertTrue(metaQuicIndex < quicBlockIndex)
+        assertTrue(quicBlockIndex < youtubeIndex)
     }
 
     @Test
@@ -153,4 +192,7 @@ class RoscomPriorityRoutingTest {
         get(name)?.takeIf { it.isJsonArray }?.asJsonArray?.mapNotNull {
             it.takeIf { element -> element.isJsonPrimitive && element.asJsonPrimitive.isString }?.asString
         }.orEmpty()
+
+    private fun com.google.gson.JsonObject.stringOrNull(name: String): String? =
+        get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
 }

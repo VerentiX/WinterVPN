@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Single branding source: change this value to rename the app everywhere. -->
-    <string name="app_name" translatable="false">Winter</string>
+    <string name="app_name" translatable="false">Lampa Mobile</string>
     <string name="title_pref_priority_probe_intervals">Connection check intervals</string>
     <string name="summary_pref_priority_probe_intervals_default">Screen on: 15 s; screen off: 300 s</string>
     <string name="summary_pref_priority_probe_intervals_value">Screen on: %1$d s; screen off: %2$d s</string>
@@ -32,10 +32,11 @@
     <string name="geo_update_success">GeoIP/GeoSite updated. Reconnecting…</string>
     <string name="geo_update_ready">GeoIP/GeoSite files are ready.</string>
     <string name="geo_update_failed">Could not update GeoIP/GeoSite. It will retry automatically.</string>
+    <string name="geo_data_error">Could not load GeoIP/GeoSite routing databases. VPN did not start. Try again or reinstall the app.</string>
     <string name="vpn_notification_channel_name">%1$s connection</string>
     <string name="vpn_notification_title">%1$s · %2$s</string>
-    <string name="app_widget_name">Winter</string>
-    <string name="app_tile_name">Winter</string>
+    <string name="app_widget_name">Lampa Mobile</string>
+    <string name="app_tile_name">Lampa Mobile</string>
     <string name="app_tile_first_use">First use of this feature, please use the app to add server</string>
     <string name="navigation_drawer_open">Open navigation drawer</string>
     <string name="navigation_drawer_close">Close navigation drawer</string>
@@ -285,12 +286,12 @@
     <string name="notification_routing_mode">Routing: %1$s</string>
     <string name="notification_routing_mode_default">default</string>
     <string name="notification_routing_mode_whitelist">whitelist</string>
-    <string name="title_pref_notification_show_battery_usage">Show Winter battery usage</string>
+    <string name="title_pref_notification_show_battery_usage">Show Хоттабыч battery usage</string>
     <string name="summary_pref_notification_show_battery_usage">Optional Android UID energy estimate since VPN start. No battery statistics are collected while disabled.</string>
-    <string name="notification_battery_usage">Winter: ≈%1$.3f%% · ≈%2$.2f mAh · %3$.3f%%/h</string>
-    <string name="notification_battery_usage_mah">Winter: ≈%1$.1f mAh</string>
-    <string name="notification_battery_usage_waiting">Winter: collecting battery statistics…</string>
-    <string name="notification_battery_usage_unavailable">Winter: battery statistics unavailable</string>
+    <string name="notification_battery_usage">Хоттабыч: ≈%1$.3f%% · ≈%2$.2f mAh · %3$.3f%%/h</string>
+    <string name="notification_battery_usage_mah">Хоттабыч: ≈%1$.1f mAh</string>
+    <string name="notification_battery_usage_waiting">Хоттабыч: collecting battery statistics…</string>
+    <string name="notification_battery_usage_unavailable">Хоттабыч: battery statistics unavailable</string>
 
 
     <string name="title_pref_domestic_dns">Domestic DNS (Optional)</string>
@@ -493,6 +494,8 @@
     <string name="update_download_installing">Download complete. Opening Android installer…</string>
     <string name="update_install_launch_failed">Could not open the Android installer.</string>
     <string name="update_available_notification">A new version %1$s is available. Tap to view the update.</string>
+    <string name="update_ready_to_install">Version %1$s is downloaded and ready to install.</string>
+    <string name="update_later">Later</string>
 
     <string name="title_policy_group_type">Policy group type</string>
     <string name="title_policy_group_subscription_id">From subscription group</string>

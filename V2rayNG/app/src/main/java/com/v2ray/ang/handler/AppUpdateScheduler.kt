@@ -62,6 +62,10 @@ object AppUpdateScheduler {
                 val update = UpdateCheckerManager.checkForUpdate(includePreRelease = false)
                 val version = update.latestVersion
                 if (update.hasUpdate && !version.isNullOrBlank()) {
+                    // Start (or resume) the APK download immediately; Range + WorkManager
+                    // retries keep it resilient across Wi‑Fi / cellular switches.
+                    AppUpdateInstaller.enqueueBackgroundDownload(applicationContext, update)
+
                     val lastNotified = MmkvManager.decodeSettingsString(PREF_LAST_NOTIFIED_VERSION)
                     if (lastNotified != version && canNotify(applicationContext)) {
                         val intent = Intent(applicationContext, CheckUpdateActivity::class.java)

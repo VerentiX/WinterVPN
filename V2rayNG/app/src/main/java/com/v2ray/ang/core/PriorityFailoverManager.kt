@@ -27,7 +27,9 @@ import java.net.Proxy
 import java.net.URI
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Replaces eager Xray health checks with an application-managed priority failover.
@@ -58,6 +60,13 @@ object PriorityFailoverManager {
     /** Soft reload after a route switch must finish (or fail) within this window. */
     private const val RELOAD_WAIT_TIMEOUT_MS = 20_000L
     private const val PROBE_WAKE_LOCK_TIMEOUT_MS = 45_000L
+    /**
+     * How often a core traffic-error signal may interrupt the idle wait.
+     * Keeps background wakeups rare even if Xray emits a burst of dial failures.
+     */
+    private const val TRAFFIC_ERROR_PROBE_COOLDOWN_MS = 12_000L
+    /** Slice size while waiting for the next scheduled probe (allows early wake). */
+    private const val PROBE_WAIT_SLICE_MS = 250L
 
     private val lock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -76,6 +85,8 @@ object PriorityFailoverManager {
     private var completedReloadGeneration = 0
     @Volatile
     private var lastReloadSucceeded = false
+    private val probeNowRequested = AtomicBoolean(false)
+    private val lastTrafficErrorProbeAt = AtomicLong(0L)
 
     private data class State(
         val guid: String,
@@ -129,6 +140,12 @@ object PriorityFailoverManager {
         return JsonUtil.toJsonPretty(runtime) ?: content
     }
 
+    /** Active Smart Priority route tag, if failover state is already prepared. */
+    fun currentRouteTag(): String? = synchronized(lock) {
+        val current = state ?: return null
+        current.plan.routes.getOrNull(current.activeIndex)
+    }
+
     fun onCoreStarted(service: Service) {
         synchronized(lock) { pendingPreviousIndex = null }
         lastReloadSucceeded = true
@@ -145,7 +162,7 @@ object PriorityFailoverManager {
         )
         CoreServiceManager.setActiveOutboundTag(initial.plan.routes[initial.activeIndex])
         CoreServiceManager.setActiveRoutingMode(
-            RoscomPriorityRouting.modeForActiveRoute(initial.plan, initial.activeIndex),
+            RoscomPriorityRouting.profileModeForActiveRoute(initial.plan, initial.activeIndex),
         )
         startMonitor(probeImmediately = true)
     }
@@ -198,6 +215,31 @@ object PriorityFailoverManager {
         startMonitor(probeImmediately = true)
     }
 
+    /**
+     * Real TUN / outbound failure observed while the VPN is up. Skip the idle
+     * probe wait and confirm the active route soon. Debounced so a burst of
+     * dial errors does not thrash the monitor or wake the radio constantly.
+     */
+    fun onTrafficError(detail: String = "") {
+        if (synchronized(lock) { state } == null) return
+        val now = SystemClock.elapsedRealtime()
+        val previous = lastTrafficErrorProbeAt.get()
+        if (now - previous < TRAFFIC_ERROR_PROBE_COOLDOWN_MS) return
+        if (!lastTrafficErrorProbeAt.compareAndSet(previous, now)) return
+
+        val short = detail.trim().take(160)
+        LogUtil.transport(
+            if (short.isEmpty()) {
+                "Smart priority: traffic error → probe now"
+            } else {
+                "Smart priority: traffic error → probe now ($short)"
+            }
+        )
+        probeNowRequested.set(true)
+        // Keep the existing failure streak / confirmation state; only wake the wait.
+        ensureMonitorRunning(probeImmediately = false)
+    }
+
     /** Unblock [awaitPriorityReload] when soft reload aborts before [onCoreStarted]. */
     fun notifyReloadAborted() {
         lastReloadSucceeded = false
@@ -207,6 +249,17 @@ object PriorityFailoverManager {
 
     private fun activeProbeIntervalMs(): Long =
         SettingsManager.getPriorityProbeIntervalMs(screenOn = isScreenInteractive)
+
+    /** Sleep until the next cadence tick, or until [onTrafficError] asks for an early probe. */
+    private suspend fun awaitNextProbeWindow() {
+        val deadline = SystemClock.elapsedRealtime() + activeProbeIntervalMs()
+        while (true) {
+            if (probeNowRequested.get()) return
+            val remaining = deadline - SystemClock.elapsedRealtime()
+            if (remaining <= 0L) return
+            delay(minOf(PROBE_WAIT_SLICE_MS, remaining))
+        }
+    }
 
     /** Apply user-edited cadence without waiting for the previous delay to expire. */
     fun onProbeIntervalsChanged() {
@@ -262,9 +315,10 @@ object PriorityFailoverManager {
             }
             while (true) {
                 if (!skipDelay) {
-                    delay(activeProbeIntervalMs())
+                    awaitNextProbeWindow()
                 }
                 skipDelay = false
+                probeNowRequested.set(false)
                 val current = synchronized(lock) { state } ?: return@launch
                 val activeIndex = current.activeIndex
                 if (isRecoveryDue(current, activeIndex)) {
@@ -353,7 +407,7 @@ object PriorityFailoverManager {
     /**
      * Apply a Smart Priority route change.
      *
-     * @return `true` keep this monitor running (seamless switch or failed reload),
+     * @return `true` keep this monitor running after a failed reload,
      *   `false` exit because a core reload started a replacement monitor,
      *   `null` when the switch was rejected (state raced).
      */
@@ -371,21 +425,13 @@ object PriorityFailoverManager {
         val toMode = RoscomPriorityRouting.modeForRouteTag(toTag)
 
         CoreServiceManager.setActiveOutboundTag(toTag)
-        CoreServiceManager.setActiveRoutingMode(toMode)
-
-        if (fromMode == toMode) {
-            // Same Roscom profile: same-mode outbounds already sit in the balancer,
-            // so existing TCP on the previous outbound can drain while new flows move.
-            synchronized(lock) { pendingPreviousIndex = null }
-            LogUtil.transport(
-                "Smart priority seamless $reason: $fromTag -> $toTag (profile=$toMode)"
-            )
-            return true
-        }
+        CoreServiceManager.setActiveRoutingMode(
+            RoscomPriorityRouting.profileModeForRouteTag(toTag),
+        )
 
         LogUtil.transport(
-            "Smart priority $reason needs core reload for routing profile " +
-                "$fromMode -> $toMode ($fromTag -> $toTag)"
+            "Smart priority $reason reload $fromTag -> $toTag " +
+                "(profile $fromMode -> $toMode)"
         )
         return awaitPriorityReload()
     }
@@ -580,6 +626,8 @@ object PriorityFailoverManager {
     fun stop(clearState: Boolean) {
         monitorJob?.cancel()
         monitorJob = null
+        probeNowRequested.set(false)
+        lastTrafficErrorProbeAt.set(0L)
         clearProbeClients()
         try {
             wakeLock?.let { lock ->
@@ -725,16 +773,10 @@ internal object PriorityFailoverConfig {
         CoreConfigManager.applyGeoRuleCompatibility(result)
         val routing = result.objectOrNull("routing") ?: return result
         val balancers = routing.arrayOrNull("balancers") ?: return result
-        // Same Roscom profile only: all candidate outbounds stay in the balancer so
-        // route changes within FULL↔FULL or WHITELIST↔WHITELIST need no core restart
-        // (existing TCP drains on the old outbound; new flows use leastLoad).
-        // Crossing FULL↔WHITELIST still reloads — routing/DNS rules must change.
-        val mode = RoscomPriorityRouting.modeForActiveRoute(plan, activeIndex)
-        val modeRoutes = plan.routes.filter {
-            RoscomPriorityRouting.modeForRouteTag(it) == mode
-        }.ifEmpty {
-            listOfNotNull(plan.routes.getOrNull(activeIndex))
-        }
+        // Only the Smart Priority pick is in the balancer. Xray must not ping or
+        // leastLoad-hop the rest; failover probes are app-owned HTTP inbounds.
+        val activeRoute = plan.routes.getOrNull(activeIndex)
+            ?: return result
         balancers.asSequence()
             .mapNotNull { it.takeIf { element -> element.isJsonObject }?.asJsonObject }
             .filter { it.stringOrNull("tag") in plan.balancerTags }
@@ -742,16 +784,17 @@ internal object PriorityFailoverConfig {
                 if (balancer.stringOrNull("tag") == plan.rootBalancerTag) {
                     balancer.add(
                         "selector",
-                        JsonArray().apply { modeRoutes.forEach { add(it) } },
+                        JsonArray().apply { add(activeRoute) },
                     )
                 }
                 balancer.remove("fallbackTag")
                 balancer.add(
                     "strategy",
-                    JsonObject().apply { addProperty("type", "leastLoad") },
+                    JsonObject().apply { addProperty("type", "random") },
                 )
             }
-        // Keep burstObservatory so leastLoad can skip dead outbounds without a reload.
+        result.remove("burstObservatory")
+        result.remove("observatory")
         addRouteProbeInbounds(result, plan, probePorts)
         return result
     }

@@ -4,8 +4,8 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- Rounded chevron, not a blunt triangle -->
     <path
-        android:fillColor="?attr/colorControlNormal"
-        android:pathData="M7,10l5,5 5,-5z" />
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7.4,9.35c0.35,-0.4 0.95,-0.42 1.32,-0.05L12,12.4l3.28,-3.1c0.37,-0.37 0.97,-0.35 1.32,0.05 0.37,0.42 0.34,1.07 -0.07,1.45l-3.85,3.65c-0.37,0.35 -0.94,0.35 -1.31,0L7.47,10.8c-0.41,-0.38 -0.44,-1.03 -0.07,-1.45z" />
 </vector>
-

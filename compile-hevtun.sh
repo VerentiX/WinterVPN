@@ -94,9 +94,12 @@ EXECMK
 # lib*.so so the APK installer extracts it into nativeLibraryDir as an
 # executable file (filename distinct from the JNI library above).
 mkdir -p "$__dir/libs"
+mkdir -p "$__dir/V2rayNG/app/libs"
 cp -r "$TMPDIR/libs/"* "$__dir/libs/"
+cp -r "$TMPDIR/libs/"* "$__dir/V2rayNG/app/libs/"
 for abi in $ABIS; do
   cp "$TMPDIR/libs-exec/$abi/hevsockstun" "$__dir/libs/$abi/libhevsockstun.so"
+  cp "$TMPDIR/libs-exec/$abi/hevsockstun" "$__dir/V2rayNG/app/libs/$abi/libhevsockstun.so"
 done
 
 popd

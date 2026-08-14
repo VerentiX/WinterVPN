@@ -10,19 +10,13 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-        <com.airbnb.lottie.LottieAnimationView
+        <com.v2ray.ang.ui.widget.SnowOverlayView
             android:id="@+id/animation_snow"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:alpha="0.4"
+            android:alpha="0.42"
             android:importantForAccessibility="no"
-            android:layout_gravity="center"
-            android:scaleX="1.15"
-            android:scaleY="1.08"
-            android:scaleType="centerCrop"
-            android:visibility="gone"
-            app:lottie_loop="true"
-            app:lottie_rawRes="@raw/snow" />
+            android:visibility="gone" />
 
         <com.v2ray.ang.ui.widget.FrostOverlayView
             android:id="@+id/frost_overlay"
@@ -125,8 +119,8 @@
                 android:paddingBottom="12dp">
 
                 <FrameLayout
-                    android:layout_width="200dp"
-                    android:layout_height="200dp"
+                    android:layout_width="248dp"
+                    android:layout_height="248dp"
                     android:layout_marginTop="8dp">
 
                     <View
@@ -139,14 +133,28 @@
 
                     <FrameLayout
                         android:id="@+id/fab"
-                        android:layout_width="156dp"
-                        android:layout_height="156dp"
+                        android:layout_width="192dp"
+                        android:layout_height="192dp"
                         android:layout_gravity="center"
                         android:background="@drawable/bg_power_btn_inactive"
                         android:clickable="true"
                         android:contentDescription="@string/tasker_start_service"
-                        android:elevation="12dp"
+                        android:elevation="14dp"
                         android:focusable="true">
+
+                        <FrameLayout
+                            android:id="@+id/power_btn_content"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:layout_gravity="center"
+                            android:padding="10dp">
+
+                            <com.v2ray.ang.ui.widget.ShieldDockView
+                                android:id="@+id/iv_fab_icon"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:contentDescription="@string/tasker_start_service" />
+                        </FrameLayout>
 
                         <ImageView
                             android:id="@+id/power_loading_ring"
@@ -154,25 +162,9 @@
                             android:layout_height="match_parent"
                             android:alpha="0"
                             android:contentDescription="@null"
-                            android:padding="3dp"
+                            android:padding="4dp"
                             android:src="@drawable/bg_power_loading_ring"
                             android:visibility="invisible" />
-
-                        <FrameLayout
-                            android:id="@+id/power_btn_content"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:padding="8dp">
-
-                            <ImageView
-                                android:id="@+id/iv_fab_icon"
-                                android:layout_width="64dp"
-                                android:layout_height="64dp"
-                                android:contentDescription="@string/tasker_start_service"
-                                android:src="@drawable/ic_power_24dp"
-                                app:tint="#FFFFFF" />
-                        </FrameLayout>
                     </FrameLayout>
                 </FrameLayout>
 
@@ -293,6 +285,13 @@
                 android:paddingBottom="24dp"
                 android:scrollbars="vertical" />
         </LinearLayout>
+
+        <com.v2ray.ang.ui.widget.ShieldLaunchOverlayView
+            android:id="@+id/shield_launch_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:importantForAccessibility="no"
+            android:visibility="invisible" />
     </FrameLayout>
 
     <com.google.android.material.navigation.NavigationView

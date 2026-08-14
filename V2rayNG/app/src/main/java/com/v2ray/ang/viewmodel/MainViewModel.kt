@@ -44,11 +44,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var keywordFilter = ""
     val serversCache = mutableListOf<ServersCache>()
     val isRunning by lazy { MutableLiveData<Boolean>() }
+    /** True while UI waits for START/STOP ack from the VPN daemon. */
+    val togglePending by lazy { MutableLiveData(false) }
     val updateListAction by lazy { MutableLiveData<Int>() }
     val updateTestResultAction by lazy { MutableLiveData<String>() }
     val profileDelayUpdatedAction by lazy { MutableLiveData<String>() }
-    val geoDataRepairAction by lazy { MutableLiveData<String>() }
-    val geoAssetsReadyAction by lazy { MutableLiveData<Boolean>() }
+    /** Non-blank when VPN start failed due to GeoIP/GeoSite data; UI shows a dismissible dialog. */
+    val geoDataErrorAction by lazy { MutableLiveData<String>() }
 
     /**
      * Refer to the official documentation for [registerReceiver](https://developer.android.com/reference/androidx/core/content/ContextCompat#registerReceiver(android.content.Context,android.content.BroadcastReceiver,android.content.IntentFilter,int):
@@ -56,6 +58,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun startListenBroadcast() {
         receivedServiceState = false
+        togglePending.value = false
         isRunning.value = false
         val mFilter = IntentFilter(AppConfig.BROADCAST_ACTION_ACTIVITY)
         ContextCompat.registerReceiver(getApplication(), mMsgReceiver, mFilter, Utils.receiverFlags())
@@ -76,7 +79,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_REGISTER_CLIENT, "")
         viewModelScope.launch {
             delay(1600L)
-            if (receivedServiceState) return@launch
+            if (receivedServiceState) {
+                settleToggle()
+                return@launch
+            }
             // Daemon process died (e.g. native hev abort) without sending STOP —
             // otherwise the UI stays "connected" and refuses a clean toggle.
             if (isRunning.value == true) {
@@ -84,7 +90,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 FailureLogRecorder.recordFailure("daemon_unreachable")
                 isRunning.value = false
             }
+            settleToggle()
         }
+    }
+
+    fun beginToggle() {
+        togglePending.value = true
+    }
+
+    fun settleToggle() {
+        togglePending.value = false
     }
 
     /**
@@ -428,13 +443,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun initAssets(assets: AssetManager) {
         viewModelScope.launch(Dispatchers.Default) {
-            val application = getApplication<AngApplication>()
-            SettingsManager.initAssets(application, assets)
-            val ready = GeoAssetUpdater.hasUsableLocalFiles(application)
-            geoAssetsReadyAction.postValue(ready)
-            if (!ready) {
-                GeoAssetUpdater.scheduleFirstInstall(application)
-            }
+            SettingsManager.initAssets(getApplication(), assets)
         }
     }
 
@@ -483,34 +492,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 AppConfig.MSG_STATE_RUNNING -> {
                     receivedServiceState = true
                     isRunning.value = true
+                    settleToggle()
                 }
 
                 AppConfig.MSG_STATE_NOT_RUNNING -> {
                     receivedServiceState = true
                     isRunning.value = false
+                    settleToggle()
                 }
 
                 AppConfig.MSG_STATE_START_SUCCESS -> {
                     receivedServiceState = true
                     isRunning.value = true
+                    settleToggle()
                 }
 
                 AppConfig.MSG_STATE_START_FAILURE -> {
                     receivedServiceState = true
                     val errorMessage = intent.getStringExtra("content")
                     if (GeoAssetUpdater.isGeoDataError(errorMessage)) {
-                        geoDataRepairAction.value = errorMessage.orEmpty()
+                        geoDataErrorAction.value =
+                            getApplication<AngApplication>().getString(R.string.geo_data_error)
                     } else if (!errorMessage.isNullOrBlank()) {
                         getApplication<AngApplication>().toastError(errorMessage)
                     } else {
                         getApplication<AngApplication>().toastError(R.string.toast_services_failure)
                     }
                     isRunning.value = false
+                    settleToggle()
                 }
 
                 AppConfig.MSG_STATE_STOP_SUCCESS -> {
                     receivedServiceState = true
                     isRunning.value = false
+                    settleToggle()
                 }
 
                 AppConfig.MSG_MEASURE_DELAY_SUCCESS -> {

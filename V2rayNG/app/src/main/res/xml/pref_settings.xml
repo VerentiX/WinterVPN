@@ -93,38 +93,6 @@
 
         <CheckBoxPreference
             android:defaultValue="false"
-            android:key="pref_custom_mtu_enabled"
-            android:summary="@string/summary_pref_custom_mtu"
-            android:title="@string/title_pref_custom_mtu" />
-
-        <EditTextPreference
-            android:dependency="pref_custom_mtu_enabled"
-            android:inputType="number"
-            android:key="pref_vpn_mtu"
-            android:summary="1500"
-            android:title="@string/title_pref_vpn_mtu" />
-
-        <CheckBoxPreference
-            android:defaultValue="false"
-            android:dependency="pref_custom_mtu_enabled"
-            android:key="pref_adaptive_mtu_enabled"
-            android:summary="@string/summary_pref_adaptive_mtu"
-            android:title="@string/title_pref_adaptive_mtu" />
-
-        <Preference
-            android:dependency="pref_adaptive_mtu_enabled"
-            android:key="pref_probe_mtu_wifi"
-            android:summary="@string/summary_pref_probe_mtu_unset"
-            android:title="@string/title_pref_probe_mtu_wifi" />
-
-        <Preference
-            android:dependency="pref_adaptive_mtu_enabled"
-            android:key="pref_probe_mtu_cellular"
-            android:summary="@string/summary_pref_probe_mtu_unset"
-            android:title="@string/title_pref_probe_mtu_cellular" />
-
-        <CheckBoxPreference
-            android:defaultValue="false"
             android:key="pref_notification_show_mtu"
             android:summary="@string/summary_pref_notification_show_mtu"
             android:title="@string/title_pref_notification_show_mtu" />

@@ -2,7 +2,6 @@ package com.v2ray.ang.util
 
 import android.util.Log
 import com.v2ray.ang.AppConfig
-import com.v2ray.ang.handler.MmkvManager
 import java.util.Locale
 
 object LogUtil {
@@ -27,7 +26,7 @@ object LogUtil {
 
     @Suppress("unused")
     fun refreshLogLevel() {
-        cachedMinPriority = parsePriority(MmkvManager.decodeSettingsString(AppConfig.PREF_LOGLEVEL, DEFAULT_LEVEL))
+        cachedMinPriority = parsePriority(DebugDiagnostics.effectiveCoreLogLevel())
     }
 
     private fun minPriority(): Int {
@@ -41,7 +40,7 @@ object LogUtil {
             if (current != CACHE_UNSET) {
                 current
             } else {
-                parsePriority(MmkvManager.decodeSettingsString(AppConfig.PREF_LOGLEVEL, DEFAULT_LEVEL)).also {
+                parsePriority(DebugDiagnostics.effectiveCoreLogLevel()).also {
                     cachedMinPriority = it
                 }
             }

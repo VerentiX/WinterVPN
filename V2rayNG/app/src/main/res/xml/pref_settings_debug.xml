@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <PreferenceCategory android:title="@string/title_debug_diagnostics">
+
+        <ListPreference
+            android:defaultValue="debug"
+            android:entries="@array/core_loglevel"
+            android:entryValues="@array/core_loglevel"
+            android:key="pref_core_loglevel"
+            android:summary="%s"
+            android:title="@string/title_core_loglevel" />
+
+        <ListPreference
+            android:defaultValue="debug"
+            android:entries="@array/hev_tunnel_loglevel"
+            android:entryValues="@array/hev_tunnel_loglevel"
+            android:key="pref_hev_tunnel_loglevel"
+            android:summary="%s"
+            android:title="@string/title_pref_hev_tunnel_loglevel" />
+
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:key="pref_connection_diagnostics_enabled"
+            android:summary="@string/summary_pref_connection_diagnostics"
+            android:title="@string/title_pref_connection_diagnostics" />
+
+        <Preference
+            android:key="pref_connection_journal"
+            android:summary="@string/summary_pref_connection_journal"
+            android:title="@string/title_pref_connection_journal" />
+
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:key="pref_failure_log_enabled"
+            android:summary="@string/summary_pref_failure_log_enabled"
+            android:title="@string/title_pref_failure_log_enabled" />
+
+        <Preference
+            android:key="pref_failure_log_view"
+            android:summary="@string/summary_pref_failure_log_view"
+            android:title="@string/title_pref_failure_log_view" />
+
+    </PreferenceCategory>
+
+</PreferenceScreen>

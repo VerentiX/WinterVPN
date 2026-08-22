@@ -77,6 +77,8 @@ class CoreRootService : Service(), ServiceControl {
 
     override fun isServiceActive(): Boolean = CoreServiceManager.isRunning()
 
+    override fun isDataplaneReady(): Boolean = CoreServiceManager.isRunning()
+
     override fun startService() {
         // do nothing
     }
@@ -100,6 +102,10 @@ class CoreRootService : Service(), ServiceControl {
 
     override fun requestTunRecreate() {
         // Root mode has no Android VpnService TUN MTU to recreate.
+    }
+
+    override fun resetDataplaneForTransport() {
+        // Root mode has no VpnService TUN sessions to RST.
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

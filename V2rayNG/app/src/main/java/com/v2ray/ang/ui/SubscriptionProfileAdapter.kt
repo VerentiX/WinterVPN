@@ -65,7 +65,13 @@ class SubscriptionProfileAdapter(
             binding.profileProtocol.text = row.protocol
             bindStatus(row)
             binding.profileRow.setOnClickListener { onSelect(row.guid) }
-            binding.viewProfileConfig.setOnClickListener { onViewConfig(row.guid) }
+            binding.viewProfileConfig.visibility =
+                if (com.v2ray.ang.AppFeatures.allowConfigView()) View.VISIBLE else View.GONE
+            binding.viewProfileConfig.setOnClickListener {
+                if (com.v2ray.ang.AppFeatures.allowConfigView()) {
+                    onViewConfig(row.guid)
+                }
+            }
         }
 
         fun bindStatus(row: Row) {

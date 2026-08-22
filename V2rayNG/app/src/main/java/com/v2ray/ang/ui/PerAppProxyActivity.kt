@@ -5,12 +5,12 @@ import android.os.Bundle
 import android.text.TextUtils
 import android.view.Menu
 import android.view.MenuItem
-import android.widget.Toast
 import androidx.activity.viewModels
 import androidx.appcompat.widget.SearchView
 import androidx.lifecycle.lifecycleScope
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.ANG_PACKAGE
+import com.v2ray.ang.AppFeatures
 import com.v2ray.ang.R
 import com.v2ray.ang.databinding.ActivityBypassListBinding
 import com.v2ray.ang.dto.AppInfo
@@ -26,7 +26,6 @@ import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import com.v2ray.ang.viewmodel.PerAppProxyViewModel
-import es.dmoral.toasty.Toasty
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -41,70 +40,97 @@ class PerAppProxyActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        //setContentView(binding.root)
         setContentViewWithToolbar(binding.root, showHomeAsUp = true, title = getString(R.string.per_app_proxy_settings))
 
         addCustomDividerToRecyclerView(binding.recyclerView, this, R.drawable.custom_divider)
 
+        MmkvManager.ensureSplitTunnelDefaults()
         initList()
-
-        binding.switchPerAppProxy.setOnCheckedChangeListener { _, isChecked ->
-            MmkvManager.encodeSettings(AppConfig.PREF_PER_APP_PROXY, isChecked)
-        }
-        binding.switchPerAppProxy.isChecked = MmkvManager.decodeSettingsBool(AppConfig.PREF_PER_APP_PROXY, false)
-
+        bindModeSelectors()
+        MmkvManager.encodeSettings(AppConfig.PREF_PER_APP_PROXY, true)
+        binding.switchPerAppProxy.isChecked = true
         binding.switchBypassApps.setOnCheckedChangeListener { _, isChecked ->
-            MmkvManager.encodeSettings(AppConfig.PREF_BYPASS_APPS, isChecked)
-        }
-        binding.switchBypassApps.isChecked = MmkvManager.decodeSettingsBool(AppConfig.PREF_BYPASS_APPS, false)
-
-        binding.layoutSwitchBypassAppsTips.setOnClickListener {
-            Toasty.info(this, R.string.summary_pref_per_app_proxy, Toast.LENGTH_LONG, true).show()
+            setBypassMode(isChecked)
         }
     }
 
+    private fun bindModeSelectors() {
+        val bypass = MmkvManager.decodeSettingsBool(AppConfig.PREF_BYPASS_APPS, true)
+        renderMode(bypass)
+        binding.checkModeBypass.setOnClickListener { setBypassMode(true) }
+        binding.checkModeProxy.setOnClickListener { setBypassMode(false) }
+    }
+
+    private fun setBypassMode(bypass: Boolean) {
+        MmkvManager.encodeSettings(AppConfig.PREF_BYPASS_APPS, bypass)
+        MmkvManager.encodeSettings(AppConfig.PREF_PER_APP_PROXY, true)
+        SettingsChangeManager.makeRestartService()
+        renderMode(bypass)
+        binding.switchBypassApps.isChecked = bypass
+    }
+
+    private fun renderMode(bypass: Boolean) {
+        binding.checkModeBypass.isChecked = bypass
+        binding.checkModeProxy.isChecked = !bypass
+        binding.switchBypassApps.isChecked = bypass
+    }
+
     private fun initList() {
-        showLoading()
+        val cached = AppManagerUtil.peekCachedApps()
+        if (!cached.isNullOrEmpty()) {
+            bindAppList(cached)
+        } else {
+            showLoading()
+        }
 
         lifecycleScope.launch {
             try {
                 val apps = withContext(Dispatchers.IO) {
-                    val appsList = AppManagerUtil.loadNetworkAppList(this@PerAppProxyActivity)
-
-                    val blacklistSet = viewModel.getAll()
-                    if (blacklistSet.isNotEmpty()) {
-                        appsList.forEach { app ->
-                            app.isSelected = if (blacklistSet.contains(app.packageName)) 1 else 0
-                        }
-                        appsList.sortedWith { p1, p2 ->
-                            when {
-                                p1.isSelected > p2.isSelected -> -1
-                                p1.isSelected < p2.isSelected -> 1
-                                p1.isSystemApp > p2.isSystemApp -> 1
-                                p1.isSystemApp < p2.isSystemApp -> -1
-                                p1.appName.lowercase() > p2.appName.lowercase() -> 1
-                                p1.appName.lowercase() < p2.appName.lowercase() -> -1
-                                p1.packageName > p2.packageName -> 1
-                                p1.packageName < p2.packageName -> -1
-                                else -> 0
-                            }
-                        }
-                    } else {
-                        val collator = Collator.getInstance()
-                        appsList.sortedWith(compareBy(collator) { it.appName })
-                    }
+                    AppManagerUtil.loadNetworkAppList(this@PerAppProxyActivity)
                 }
-
-                appsAll = apps
-                adapter = PerAppProxyAdapter(apps, viewModel)
-                binding.recyclerView.adapter = adapter
-
+                if (!samePackageSet(appsAll, apps)) {
+                    bindAppList(apps)
+                }
             } catch (e: Exception) {
                 LogUtil.e(ANG_PACKAGE, "Error loading apps", e)
             } finally {
                 hideLoading()
             }
         }
+    }
+
+    private fun samePackageSet(current: List<AppInfo>?, next: List<AppInfo>): Boolean {
+        if (current == null || current.size != next.size) return false
+        return current.map { it.packageName }.toSet() == next.map { it.packageName }.toSet()
+    }
+
+    private fun bindAppList(appsList: ArrayList<AppInfo>) {
+        val blacklistSet = viewModel.getAll()
+        val apps = if (blacklistSet.isNotEmpty()) {
+            appsList.forEach { app ->
+                app.isSelected = if (blacklistSet.contains(app.packageName)) 1 else 0
+            }
+            appsList.sortedWith { p1, p2 ->
+                when {
+                    p1.isSelected > p2.isSelected -> -1
+                    p1.isSelected < p2.isSelected -> 1
+                    p1.isSystemApp > p2.isSystemApp -> 1
+                    p1.isSystemApp < p2.isSystemApp -> -1
+                    p1.appName.lowercase() > p2.appName.lowercase() -> 1
+                    p1.appName.lowercase() < p2.appName.lowercase() -> -1
+                    p1.packageName > p2.packageName -> 1
+                    p1.packageName < p2.packageName -> -1
+                    else -> 0
+                }
+            }
+        } else {
+            val collator = Collator.getInstance()
+            appsList.sortedWith(compareBy(collator) { it.appName })
+        }
+
+        appsAll = apps
+        adapter = PerAppProxyAdapter(apps, viewModel)
+        binding.recyclerView.adapter = adapter
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -121,6 +147,12 @@ class PerAppProxyActivity : BaseActivity() {
                     return false
                 }
             })
+        }
+
+        if (AppFeatures.isConsumerBuild) {
+            menu.removeItem(R.id.select_proxy_app)
+            menu.removeItem(R.id.import_proxy_app)
+            menu.removeItem(R.id.export_proxy_app)
         }
 
         return super.onCreateOptionsMenu(menu)

@@ -102,6 +102,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         togglePending.value = false
     }
 
+    @Volatile
+    private var lastStartSuccessAt = 0L
+
+    fun shouldIgnoreStopMash(guardMs: Long): Boolean {
+        val at = lastStartSuccessAt
+        if (at == 0L) return false
+        return android.os.SystemClock.elapsedRealtime() - at < guardMs
+    }
+
+    /** Daemon died or never acked — never leave the power button latched. */
+    fun forceToggleIdle(running: Boolean) {
+        isRunning.value = running
+        settleToggle()
+    }
+
     /**
      * Called when the ViewModel is cleared.
      */
@@ -503,6 +518,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 AppConfig.MSG_STATE_START_SUCCESS -> {
                     receivedServiceState = true
+                    lastStartSuccessAt = android.os.SystemClock.elapsedRealtime()
                     isRunning.value = true
                     settleToggle()
                 }
@@ -511,6 +527,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     receivedServiceState = true
                     val errorMessage = intent.getStringExtra("content")
                     if (GeoAssetUpdater.isGeoDataError(errorMessage)) {
+                        GeoAssetUpdater.forceUpdate(getApplication(), reconnectAfterUpdate = true)
                         geoDataErrorAction.value =
                             getApplication<AngApplication>().getString(R.string.geo_data_error)
                     } else if (!errorMessage.isNullOrBlank()) {

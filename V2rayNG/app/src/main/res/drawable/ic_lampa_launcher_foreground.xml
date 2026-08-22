@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Warm lamp glow -->
+    <path
+        android:fillColor="#33FFB74D"
+        android:pathData="M54,18 C72,18 86,32 86,50 C86,68 72,82 54,82 C36,82 22,68 22,50 C22,32 36,18 54,18 Z" />
+    <!-- Lamp body -->
+    <path
+        android:fillColor="#FF8F00"
+        android:pathData="M38,44 C38,34 45,28 54,28 C63,28 70,34 70,44 L70,58 C70,66 63,72 54,72 C45,72 38,66 38,58 Z" />
+    <path
+        android:fillColor="#FFE082"
+        android:pathData="M44,46 C44,40 48,36 54,36 C60,36 64,40 64,46 L64,54 C64,60 60,64 54,64 C48,64 44,60 44,54 Z" />
+    <!-- Turban -->
+    <path
+        android:fillColor="#E64A19"
+        android:pathData="M34,34 C34,24 44,18 54,18 C64,18 74,24 74,34 C76,38 72,42 68,40 C64,46 44,46 40,40 C36,42 32,38 34,34 Z" />
+    <path
+        android:fillColor="#FFD54F"
+        android:pathData="M36,32 L72,32 L72,36 L36,36 Z" />
+    <!-- Beard hint -->
+    <path
+        android:fillColor="#FFF8E1"
+        android:pathData="M42,58 C42,66 48,74 54,76 C60,74 66,66 66,58 C62,62 46,62 42,58 Z" />
+    <!-- Base -->
+    <path
+        android:fillColor="#5D4037"
+        android:pathData="M46,72 L62,72 L64,78 L44,78 Z" />
+</vector>

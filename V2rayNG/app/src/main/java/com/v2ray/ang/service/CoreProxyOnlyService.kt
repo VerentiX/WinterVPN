@@ -56,6 +56,8 @@ class CoreProxyOnlyService : Service(), ServiceControl {
 
     override fun isServiceActive(): Boolean = CoreServiceManager.isRunning()
 
+    override fun isDataplaneReady(): Boolean = CoreServiceManager.isRunning()
+
     /**
      * Starts the service.
      */
@@ -92,6 +94,10 @@ class CoreProxyOnlyService : Service(), ServiceControl {
 
     override fun requestTunRecreate() {
         // Proxy-only mode has no Android VpnService TUN MTU to recreate.
+    }
+
+    override fun resetDataplaneForTransport() {
+        // No TUN sessions to RST in proxy-only mode.
     }
 
     /**

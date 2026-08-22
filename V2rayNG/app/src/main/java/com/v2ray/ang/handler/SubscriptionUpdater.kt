@@ -173,19 +173,19 @@ object SubscriptionUpdater {
 
             val sub = SubscriptionCache(subId, subItem)
 
-            // Notify about update start
-            NotificationHelper.notify(
-                NotificationChannelType.SUBSCRIPTION_UPDATE,
-                applicationContext,
-                applicationContext.getString(R.string.title_pref_auto_update_subscription),
-                "Updating ${sub.subscription.remarks}"
-            )
+            try {
+                NotificationHelper.notify(
+                    NotificationChannelType.SUBSCRIPTION_UPDATE,
+                    applicationContext,
+                    applicationContext.getString(R.string.title_pref_auto_update_subscription),
+                    "Updating ${sub.subscription.remarks}"
+                )
 
-            LogUtil.i(AppConfig.TAG, "SubscriptionUpdater automatic update: ---${sub.subscription.remarks}")
-            AngConfigManager.updateConfigViaSub(sub)
-
-            // Clear notification
-            NotificationHelper.cancel(NotificationChannelType.SUBSCRIPTION_UPDATE, applicationContext)
+                LogUtil.i(AppConfig.TAG, "SubscriptionUpdater automatic update: ---${sub.subscription.remarks}")
+                AngConfigManager.updateConfigViaSub(sub)
+            } finally {
+                NotificationHelper.cancel(NotificationChannelType.SUBSCRIPTION_UPDATE, applicationContext)
+            }
 
             return Result.success()
         }

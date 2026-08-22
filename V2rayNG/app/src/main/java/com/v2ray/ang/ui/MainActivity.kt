@@ -27,9 +27,11 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.navigation.NavigationView
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.AppFeatures
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.databinding.ActivityMainBinding
+import com.v2ray.ang.dto.SubscriptionUpdateError
 import com.v2ray.ang.dto.entities.SubscriptionCache
 import com.v2ray.ang.enums.PermissionType
 import com.v2ray.ang.extension.toast
@@ -37,11 +39,15 @@ import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.AppUpdateInstaller
+import com.v2ray.ang.handler.AppUpdateScheduler
+import com.v2ray.ang.handler.LampaSubscriptionMetadata
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsChangeManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.SubscriptionRefreshManager
 import com.v2ray.ang.handler.SubscriptionUpdater
+import com.v2ray.ang.handler.SubscriptionUrlResolver
+import com.v2ray.ang.util.LampaErrorMessages
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import com.v2ray.ang.viewmodel.MainViewModel
@@ -53,8 +59,15 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelectedListener {
     companion object {
+        const val EXTRA_PAYMENT_SUCCESS = "payment_success"
+        const val EXTRA_PAYMENT_SUB_ID = "payment_sub_id"
+
         /** Unblocks the power button if the daemon never answers START/STOP. */
-        private const val TOGGLE_ACK_TIMEOUT_MS = 10_000L
+        private const val TOGGLE_ACK_TIMEOUT_MS = 4_000L
+        /** Swallow mash taps so they do not become Stop 100ms after Start succeeded. */
+        private const val START_MASH_GUARD_MS = 800L
+        private const val TRIAL_SUB_ID_KEY = "LAMPA_TRIAL_SUB_ID"
+        private const val TRIAL_GUID_KEY = "LAMPA_TRIAL_GUID"
     }
     private val binding by lazy {
         ActivityMainBinding.inflate(layoutInflater)
@@ -71,11 +84,15 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     private var toggleAckTimeoutJob: Job? = null
     /** Offer a pre-downloaded APK install dialog at most once per MainActivity instance. */
     private var offeredReadyUpdate = false
+    /** Start connect animation only after the system VPN consent screen, if it was needed. */
+    private var connectAfterVpnPermission = false
 
     private val requestVpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (it.resultCode == RESULT_OK) {
-            startV2Ray()
+        if (it.resultCode == RESULT_OK && connectAfterVpnPermission) {
+            connectAfterVpnPermission = false
+            startConnect()
         } else {
+            connectAfterVpnPermission = false
             mainViewModel.settleToggle()
             applyRunningState(false, mainViewModel.isRunning.value == true)
         }
@@ -93,12 +110,17 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(binding.root)
-        setupToolbar(binding.toolbar, false, getString(R.string.app_name))
+        setupToolbar(
+            binding.toolbar,
+            false,
+            if (AppFeatures.isConsumerBuild) "" else getString(R.string.app_name),
+        )
         setupSnowAnimation()
 
         subscriptionCardAdapter = SubscriptionCardAdapter(object : SubscriptionCardAdapter.Listener {
             override fun onSelectProfile(guid: String) = selectProfile(guid)
             override fun onViewProfileConfig(guid: String) {
+                if (!AppFeatures.allowConfigView()) return
                 requestActivityLauncher.launch(
                     Intent(this@MainActivity, ConfigViewerActivity::class.java).putExtra("guid", guid)
                 )
@@ -112,9 +134,19 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
                 mainViewModel.testSubscriptionRealPing(subscriptionId)
             }
             override fun onEditSubscription(subscriptionId: String) {
-                requestActivityLauncher.launch(
-                    Intent(this@MainActivity, SubEditActivity::class.java).putExtra("subId", subscriptionId)
-                )
+                if (AppFeatures.isConsumerBuild) {
+                    showSubscriptionManageDialog(subscriptionId)
+                } else {
+                    requestActivityLauncher.launch(
+                        Intent(this@MainActivity, SubEditActivity::class.java).putExtra("subId", subscriptionId)
+                    )
+                }
+            }
+            override fun onSelectSubscription(subscription: SubscriptionCache) {
+                selectSubscription(subscription)
+            }
+            override fun onRenewSubscription(subscription: SubscriptionCache) {
+                openSubscriptionRenewal(subscription)
             }
         })
         binding.subscriptionCards.layoutManager = LinearLayoutManager(this)
@@ -134,6 +166,205 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
         checkAndRequestPermission(PermissionType.POST_NOTIFICATIONS) {
         }
+        applyConsumerUi()
+        setupSplitTunnelCard()
+        binding.btnPaymentSuccessDone.setOnClickListener {
+            binding.paymentSuccessOverlay.visibility = View.GONE
+        }
+        handlePaymentReturn(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handlePaymentReturn(intent)
+    }
+
+    private fun handlePaymentReturn(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_PAYMENT_SUCCESS, false) != true) return
+        intent.removeExtra(EXTRA_PAYMENT_SUCCESS)
+        val paidSubId = intent.getStringExtra(EXTRA_PAYMENT_SUB_ID).orEmpty()
+        intent.removeExtra(EXTRA_PAYMENT_SUB_ID)
+        RenewSubscriptionActivity.markPaymentThanksShown()
+
+        binding.tvPaymentSuccessTitle.setText(R.string.subscription_payment_success_title)
+        binding.tvPaymentSuccessMessage.setText(R.string.subscription_payment_success_confirming)
+        binding.paymentSuccessOverlay.visibility = View.VISIBLE
+
+        refreshAfterSuccessfulPayment(paidSubId)
+    }
+
+    private fun refreshAfterSuccessfulPayment(paidSubId: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            var updated = false
+            val beforeExpire = resolvePaidSubscription(paidSubId)?.subscription?.expireAt ?: 0L
+            run {
+                repeat(6) { attempt ->
+                    if (attempt > 0) delay(1500)
+                    val target = resolvePaidSubscription(paidSubId) ?: return@repeat
+                    val result = AngConfigManager.updateConfigViaSub(target)
+                    SubscriptionUpdater.syncOne(subId = target.guid)
+                    val subId = SubscriptionUrlResolver.extractSubId(target.subscription.url)
+                    if (!subId.isNullOrBlank()) {
+                        LampaSubscriptionMetadata.refreshFromApi(subId)?.let { snapshot ->
+                            LampaSubscriptionMetadata.applySnapshot(target.subscription, snapshot)
+                            MmkvManager.encodeSubscription(target.guid, target.subscription)
+                        }
+                    }
+                    val afterExpire = resolvePaidSubscription(paidSubId)?.subscription?.expireAt ?: 0L
+                    val configsOk = result.successCount > 0 || result.configCount > 0
+                    if (configsOk) {
+                        updated = true
+                        if (beforeExpire <= 0L || afterExpire > beforeExpire || attempt == 5) {
+                            return@run
+                        }
+                    }
+                }
+            }
+            if (updated && resolvePaidSubscription(paidSubId)?.subscription?.isTrial != true) {
+                removeLocalTrialSubscriptions()
+            }
+            withContext(Dispatchers.Main) {
+                mainViewModel.reloadServerList()
+                if (::subscriptionCardAdapter.isInitialized) {
+                    subscriptionCardAdapter.reload()
+                }
+                refreshSelectedProfile()
+                binding.tvPaymentSuccessMessage.setText(
+                    if (updated) R.string.subscription_payment_success_message
+                    else R.string.subscription_payment_success_update_later,
+                )
+            }
+        }
+    }
+
+    private fun resolvePaidSubscription(paidSubId: String): SubscriptionCache? {
+        val all = MmkvManager.decodeSubscriptions()
+        if (paidSubId.isNotBlank()) {
+            all.firstOrNull { SubscriptionUrlResolver.extractSubId(it.subscription.url) == paidSubId }
+                ?.let { return it }
+        }
+        return all.firstOrNull { it.subscription.url.isNotBlank() }
+    }
+
+    private fun applyConsumerUi() {
+        if (!AppFeatures.isConsumerBuild) return
+        binding.layoutTest.visibility = View.GONE
+        binding.animationToggleBar.visibility = View.GONE
+        binding.drawerLayout.setDrawerLockMode(
+            androidx.drawerlayout.widget.DrawerLayout.LOCK_MODE_LOCKED_CLOSED
+        )
+        binding.toolbar.navigationIcon = null
+        binding.toolbar.title = ""
+        title = ""
+    }
+
+    private fun isLocalTrialSubscription(cache: SubscriptionCache): Boolean {
+        val storedSubId = MmkvManager.decodeSettingsString(TRIAL_SUB_ID_KEY).orEmpty()
+        val storedGuid = MmkvManager.decodeSettingsString(TRIAL_GUID_KEY).orEmpty()
+        return cache.subscription.isTrial ||
+            (storedGuid.isNotBlank() && cache.guid == storedGuid) ||
+            (storedSubId.isNotBlank() &&
+                SubscriptionUrlResolver.extractSubId(cache.subscription.url) == storedSubId)
+    }
+
+    private fun removeLocalTrialSubscriptions() {
+        MmkvManager.decodeSubscriptions()
+            .filter(::isLocalTrialSubscription)
+            .forEach { SettingsManager.removeSubscriptionWithDefault(it.guid) }
+        MmkvManager.encodeSettings(TRIAL_SUB_ID_KEY, "")
+        MmkvManager.encodeSettings(TRIAL_GUID_KEY, "")
+    }
+
+    private fun setupSplitTunnelCard() {
+        MmkvManager.ensureSplitTunnelDefaults()
+        binding.splitTunnelCard.visibility = View.VISIBLE
+        binding.splitTunnelCard.setOnClickListener {
+            requestActivityLauncher.launch(Intent(this, PerAppProxyActivity::class.java))
+        }
+        refreshSplitTunnelSummary()
+    }
+
+    private fun refreshSplitTunnelSummary() {
+        val count = MmkvManager.decodeSettingsStringSet(AppConfig.PREF_PER_APP_PROXY_SET)?.size ?: 0
+        val bypass = MmkvManager.decodeSettingsBool(AppConfig.PREF_BYPASS_APPS, true)
+        binding.tvSplitTunnelSummary.text = when {
+            count <= 0 -> getString(R.string.split_tunnel_summary_all)
+            bypass -> getString(R.string.split_tunnel_summary_bypass, count)
+            else -> getString(R.string.split_tunnel_summary_proxy, count)
+        }
+    }
+
+    private fun selectSubscription(subscription: SubscriptionCache) {
+        val profiles = MmkvManager.decodeServerList(subscription.guid)
+        val firstGuid = profiles.firstOrNull()
+        if (firstGuid.isNullOrEmpty()) {
+            toast(R.string.subscription_select_first)
+            updateSubscription(subscription)
+            return
+        }
+        selectProfile(firstGuid)
+        subscriptionCardAdapter.setActiveSubscription(subscription.guid)
+    }
+
+    private fun openSubscriptionRenewal(subscription: SubscriptionCache) {
+        val subId = SubscriptionUrlResolver.extractSubId(subscription.subscription.url)
+        if (!subId.isNullOrBlank()) {
+            RenewSubscriptionActivity.launch(this, subId)
+            return
+        }
+        val support = subscription.subscription.supportUrl?.trim().orEmpty()
+        val target = support.ifBlank { AppConfig.LAMPA_TELEGRAM_URL }
+        Utils.openUri(this, target)
+    }
+
+    private fun showSubscriptionManageDialog(subscriptionId: String) {
+        val item = MmkvManager.decodeSubscription(subscriptionId) ?: return
+        val cache = SubscriptionCache(subscriptionId, item)
+        val options = if (AppFeatures.isConsumerBuild) {
+            arrayOf(
+                getString(R.string.subscription_renew),
+                getString(R.string.title_sub_update),
+                getString(R.string.menu_item_del_config),
+            )
+        } else {
+            arrayOf(
+                getString(R.string.title_sub_update),
+                getString(R.string.subscription_renew),
+                getString(R.string.menu_item_del_config),
+            )
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.subscription_manage)
+            .setItems(options) { _, which ->
+                if (AppFeatures.isConsumerBuild) {
+                    when (which) {
+                        0 -> openSubscriptionRenewal(cache)
+                        1 -> updateSubscription(cache)
+                        2 -> confirmDeleteSubscription(subscriptionId)
+                    }
+                } else {
+                    when (which) {
+                        0 -> updateSubscription(cache)
+                        1 -> openSubscriptionRenewal(cache)
+                        2 -> confirmDeleteSubscription(subscriptionId)
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun confirmDeleteSubscription(subscriptionId: String) {
+        AlertDialog.Builder(this)
+            .setMessage(R.string.subscription_delete_confirm)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                SettingsManager.removeSubscriptionWithDefault(subscriptionId)
+                mainViewModel.reloadServerList()
+                subscriptionCardAdapter.reload()
+                refreshSelectedProfile()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun isWinterAnimationsEnabled(): Boolean {
@@ -158,7 +389,6 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     private fun applyAnimationPreference(enabled: Boolean) {
         if (enabled) {
             if (mainViewModel.isRunning.value == true) {
-                setWinterEffectsEnabled(true, animate = true)
                 binding.powerGlow.animate().alpha(1f).setDuration(220L).start()
                 startConnectedPulseIfNeeded()
             }
@@ -288,36 +518,44 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     }
 
     private fun handleFabAction() {
+        val currentlyRunning = mainViewModel.isRunning.value == true
         if (mainViewModel.togglePending.value == true) {
-            // Allow a second tap to retry stop while the daemon is still winding down.
-            if (mainViewModel.isRunning.value == true) {
-                CoreServiceManager.stopVService(this)
-                scheduleToggleAckTimeout()
-            }
-            return
+            // Extra Start taps while connecting race TUN close. A stuck
+            // "connected" UI must still accept Stop so the user is not trapped.
+            if (!currentlyRunning) return
         }
 
-        if (mainViewModel.isRunning.value != true && !hasSelectedProfile()) {
+        if (!currentlyRunning && !hasSelectedProfile()) {
             updateConnectButtonAvailability()
             return
         }
 
-        val currentlyRunning = mainViewModel.isRunning.value == true
-        mainViewModel.beginToggle()
-        applyRunningState(isLoading = true, isRunning = currentlyRunning)
-
         if (currentlyRunning) {
-            CoreServiceManager.stopVService(this)
-        } else if (SettingsManager.isVpnMode()) {
-            val intent = VpnService.prepare(this)
-            if (intent == null) {
-                startV2Ray()
-            } else {
-                requestVpnPermission.launch(intent)
+            if (mainViewModel.shouldIgnoreStopMash(START_MASH_GUARD_MS)) {
+                return
             }
-        } else {
-            startV2Ray()
+            mainViewModel.beginToggle()
+            applyRunningState(isLoading = true, isRunning = true)
+            CoreServiceManager.stopVService(this)
+            scheduleToggleAckTimeout()
+            return
         }
+
+        if (SettingsManager.isVpnMode()) {
+            val consent = VpnService.prepare(this)
+            if (consent != null) {
+                connectAfterVpnPermission = true
+                requestVpnPermission.launch(consent)
+                return
+            }
+        }
+        startConnect()
+    }
+
+    private fun startConnect() {
+        mainViewModel.beginToggle()
+        applyRunningState(isLoading = true, isRunning = false)
+        startV2Ray()
         scheduleToggleAckTimeout()
     }
 
@@ -326,8 +564,8 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         toggleAckTimeoutJob = lifecycleScope.launch {
             delay(TOGGLE_ACK_TIMEOUT_MS)
             if (mainViewModel.togglePending.value != true) return@launch
-            LogUtil.w(AppConfig.TAG, "VPN toggle ack timed out; reconciling UI with daemon")
-            mainViewModel.requestServiceState()
+            LogUtil.w(AppConfig.TAG, "VPN toggle ack timed out; unlocking button")
+            mainViewModel.forceToggleIdle(running = false)
         }
     }
 
@@ -380,18 +618,11 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     }
 
     private fun setupSnowAnimation() {
-        if (!isWinterAnimationsEnabled()) {
-            binding.frostOverlay.setFrozenImmediate(false)
-            binding.animationSnow.cancelAnimation()
-            binding.animationSnow.visibility = View.GONE
-            return
-        }
-        if (mainViewModel.isRunning.value == true) {
-            binding.frostOverlay.post {
-                if (!isWinterAnimationsEnabled()) return@post
-                setWinterEffectsEnabled(true, animate = false)
-            }
-        }
+        binding.frostOverlay.setFrozenImmediate(false)
+        binding.animationSnow.animate().cancel()
+        binding.animationSnow.cancelAnimation()
+        binding.animationSnow.alpha = 0f
+        binding.animationSnow.visibility = View.GONE
     }
 
     private fun setSnowAnimationEnabled(enabled: Boolean) {
@@ -399,54 +630,13 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     }
 
     private fun setWinterEffectsEnabled(enabled: Boolean, animate: Boolean = true) {
-        if (enabled && !isWinterAnimationsEnabled()) {
-            // Still allow forced cleanup path via enabled=false.
-            setWinterEffectsEnabled(false, animate = false)
-            return
-        }
-        if (enabled) {
-            winterEffectsActive = true
-            if (animate) {
-                binding.frostOverlay.freezeFrom(binding.fab, binding.layoutTest)
-            } else {
-                binding.frostOverlay.setFrozenImmediate(true, binding.fab, binding.layoutTest)
-            }
-            binding.animationSnow.apply {
-                visibility = View.VISIBLE
-                if (!isAnimating) playAnimation()
-                animate().cancel()
-                if (animate) {
-                    alpha = 0f
-                    animate().alpha(0.42f).setDuration(1_200L)
-                        .setStartDelay(250L)
-                        .setInterpolator(DecelerateInterpolator())
-                        .start()
-                } else {
-                    alpha = 0.42f
-                }
-            }
-        } else {
-            if (!winterEffectsActive && animate) return
-            winterEffectsActive = false
-            if (animate) {
-                binding.frostOverlay.melt()
-                binding.animationSnow.animate().cancel()
-                binding.animationSnow.animate()
-                    .alpha(0f)
-                    .setDuration(700L)
-                    .withEndAction {
-                        binding.animationSnow.cancelAnimation()
-                        binding.animationSnow.visibility = View.GONE
-                    }
-                    .start()
-            } else {
-                binding.frostOverlay.setFrozenImmediate(false)
-                binding.animationSnow.animate().cancel()
-                binding.animationSnow.cancelAnimation()
-                binding.animationSnow.alpha = 0f
-                binding.animationSnow.visibility = View.GONE
-            }
-        }
+        winterEffectsActive = false
+        binding.frostOverlay.melt()
+        binding.frostOverlay.setFrozenImmediate(false)
+        binding.animationSnow.animate().cancel()
+        binding.animationSnow.cancelAnimation()
+        binding.animationSnow.alpha = 0f
+        binding.animationSnow.visibility = View.GONE
     }
 
     private fun startConnectedPulseIfNeeded() {
@@ -612,14 +802,7 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
             }
 
             if (stateChanged) {
-                if (winterOn) {
-                    if (!winterEffectsActive && !shieldCeremonyActive) {
-                        setWinterEffectsEnabled(true, animate = true)
-                    } else if (!shieldCeremonyActive || shieldIconSeated) {
-                        // Snow/frost wait for shield impact during the connect ceremony.
-                        ensureSnowVisible(animate = true)
-                    }
-                } else {
+                if (!winterOn) {
                     setWinterEffectsEnabled(false, animate = false)
                 }
                 setTestState(getString(R.string.connection_connected))
@@ -654,8 +837,14 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
                     }
                 }
             } else {
-                binding.ivFabIcon.setPowered(true, animate = false)
-                if (winterOn) {
+                // Running state can be emitted more than once while the connect ceremony is
+                // still in flight. Do not let a duplicate emission reveal the dock shield
+                // before ShieldLaunchOverlayView reports the actual landing impact.
+                binding.ivFabIcon.setPowered(
+                    on = !shieldCeremonyActive || shieldIconSeated,
+                    animate = false
+                )
+                if (winterOn && (!shieldCeremonyActive || shieldIconSeated)) {
                     startConnectedPulseIfNeeded()
                 }
             }
@@ -711,10 +900,8 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         binding.shieldLaunchOverlay.play(
             binding.fab,
             onImpact = {
-                // Reveal the powered dock under the landing shield — no empty gap / color flash.
                 shieldIconSeated = true
                 setPowerLoading(false)
-                // One frame later: avoid stacking drawable swap + dock reveal + punch on impact.
                 binding.root.post {
                     if (!shieldIconSeated) return@post
                     seatConnectedButtonLook()
@@ -722,16 +909,10 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
                     binding.ivFabIcon.alpha = 1f
                     punchPowerButton()
                 }
-                // Frost is the heaviest pass — start after the button bounce begins.
                 binding.root.postDelayed({
                     if (!shieldIconSeated || !isWinterAnimationsEnabled()) return@postDelayed
                     binding.frostOverlay.freezeFrom(binding.fab, binding.layoutTest)
                 }, 200L)
-                binding.root.postDelayed({
-                    if (mainViewModel.isRunning.value == true && isWinterAnimationsEnabled()) {
-                        ensureSnowVisible(animate = true)
-                    }
-                }, 520L)
             },
             onEnd = {
                 shieldCeremonyActive = false
@@ -795,19 +976,10 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     }
 
     private fun ensureSnowVisible(animate: Boolean) {
-        if (!isWinterAnimationsEnabled()) return
-        binding.animationSnow.apply {
-            visibility = View.VISIBLE
-            if (!isAnimating) playAnimation()
-            animate().cancel()
-            if (animate && alpha < 0.35f) {
-                animate().alpha(0.42f).setDuration(900L)
-                    .setInterpolator(DecelerateInterpolator())
-                    .start()
-            } else if (!animate) {
-                alpha = 0.42f
-            }
-        }
+        binding.animationSnow.animate().cancel()
+        binding.animationSnow.cancelAnimation()
+        binding.animationSnow.alpha = 0f
+        binding.animationSnow.visibility = View.GONE
     }
 
     private fun hasSelectedProfile(): Boolean {
@@ -844,8 +1016,13 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         updateConnectButtonAvailability()
         if (::subscriptionCardAdapter.isInitialized) subscriptionCardAdapter.reload()
         refreshSubscriptionsOnAppOpen()
+        refreshLampaSubscriptionMetadata()
+        AppUpdateScheduler.checkIfDue(this)
         AppUpdateInstaller.resumePendingDownloadIfNeeded(this)
         maybeOfferReadyUpdate()
+        if (::subscriptionCardAdapter.isInitialized) {
+            refreshSplitTunnelSummary()
+        }
     }
 
     private fun maybeOfferReadyUpdate() {
@@ -924,6 +1101,38 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         powerRingAnimator?.takeIf { it.isPaused }?.resume()
     }
 
+    private fun refreshLampaSubscriptionMetadata() {
+        if (!AppFeatures.isConsumerBuild) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            var changed = false
+            MmkvManager.decodeSubscriptions().forEach { cache ->
+                val subId = SubscriptionUrlResolver.extractSubId(cache.subscription.url) ?: return@forEach
+                val snapshot = LampaSubscriptionMetadata.refreshFromApi(subId) ?: return@forEach
+                LampaSubscriptionMetadata.applySnapshot(cache.subscription, snapshot)
+                MmkvManager.encodeSubscription(cache.guid, cache.subscription)
+                changed = true
+            }
+            if (changed) {
+                withContext(Dispatchers.Main) {
+                    subscriptionCardAdapter.reload()
+                }
+            }
+        }
+    }
+
+    private fun syncLampaSubscriptionMetadata(subscription: SubscriptionCache) {
+        if (!AppFeatures.isConsumerBuild) return
+        val subId = SubscriptionUrlResolver.extractSubId(subscription.subscription.url) ?: return
+        lifecycleScope.launch(Dispatchers.IO) {
+            val snapshot = LampaSubscriptionMetadata.refreshFromApi(subId) ?: return@launch
+            LampaSubscriptionMetadata.applySnapshot(subscription.subscription, snapshot)
+            MmkvManager.encodeSubscription(subscription.guid, subscription.subscription)
+            withContext(Dispatchers.Main) {
+                subscriptionCardAdapter.reload()
+            }
+        }
+    }
+
     private fun refreshSubscriptionsOnAppOpen() {
         SubscriptionRefreshManager.refreshOnAppOpen { result ->
             if (result.configCount > 0 || result.successCount > 0) {
@@ -937,6 +1146,18 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        if (AppFeatures.isConsumerBuild) {
+            menu.add(0, R.id.add_config, 0, R.string.subscription_import)
+                .setIcon(R.drawable.ic_add_24dp)
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            menu.add(0, R.id.import_clipboard, 1, R.string.menu_item_import_config_clipboard)
+                .setIcon(R.drawable.ic_content_paste_24dp)
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            listOf(R.id.add_config, R.id.import_clipboard).forEach { id ->
+                menu.findItem(id)?.icon?.mutate()?.setTint(Color.WHITE)
+            }
+            return true
+        }
         menuInflater.inflate(R.menu.menu_main, menu)
 
         // This screen always uses the dark cosmic toolbar, even when the phone
@@ -1010,21 +1231,21 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     private fun showAddConfigMenu(item: MenuItem) {
         val anchor = findViewById<View>(item.itemId) ?: binding.toolbar
         androidx.appcompat.widget.PopupMenu(this, anchor).apply {
-            menu.add(0, 1, 0, R.string.menu_item_import_config_qrcode)
-            menu.add(0, 2, 1, R.string.menu_item_import_config_manual)
-            menu.add(0, 3, 2, R.string.menu_item_import_config_clipboard)
+            menu.add(0, 1, 0, R.string.menu_item_import_config_clipboard)
+            menu.add(0, 2, 1, R.string.menu_item_import_config_qrcode)
+            menu.add(0, 3, 2, R.string.menu_item_import_config_manual)
             setOnMenuItemClickListener { menuItem ->
                 when (menuItem.itemId) {
                     1 -> {
-                        importFromQrCode()
+                        importFromClipboard()
                         true
                     }
                     2 -> {
-                        showManualImportDialog()
+                        importFromQrCode()
                         true
                     }
                     3 -> {
-                        importFromClipboard()
+                        showManualImportDialog()
                         true
                     }
                     else -> false
@@ -1085,6 +1306,10 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
             withContext(Dispatchers.Main) {
                 hideLoading()
                 if (count + countSub > 0) {
+                    val importingKnownTrial = MmkvManager.decodeSubscriptions()
+                        .filter(::isLocalTrialSubscription)
+                        .any { it.subscription.url.trim() == raw.trim() }
+                    if (!importingKnownTrial) removeLocalTrialSubscriptions()
                     if (count > 0) {
                         toast(getString(R.string.title_import_config_count, count))
                     } else {
@@ -1094,6 +1319,9 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
                     setupGroupTab()
                     refreshSelectedProfile()
                     updateConnectButtonAvailability()
+                    if (AppFeatures.isConsumerBuild) {
+                        selectFirstAvailableSubscription()
+                    }
                 } else {
                     toastError(R.string.toast_failure)
                 }
@@ -1107,16 +1335,42 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
             val result = AngConfigManager.updateConfigViaSub(subscription)
             SubscriptionUpdater.syncOne(subId = subscription.guid)
             withContext(Dispatchers.Main) {
-                if (result.successCount > 0) {
-                    toast(getString(R.string.title_update_config_count, result.configCount))
-                } else {
-                    toastError(R.string.toast_failure)
+                hideLoading()
+                when {
+                    result.successCount > 0 -> {
+                        syncLampaSubscriptionMetadata(subscription)
+                        toast(getString(R.string.title_update_config_count, result.configCount))
+                    }
+                    result.error != null || result.failureCount > 0 -> {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle(R.string.title_sub_update)
+                            .setMessage(
+                                LampaErrorMessages.subscriptionUpdate(
+                                    this@MainActivity,
+                                    result.error ?: SubscriptionUpdateError.UNKNOWN,
+                                    result.errorDetail,
+                                ),
+                            )
+                            .setPositiveButton(android.R.string.ok, null)
+                            .show()
+                    }
+                    result.skipCount > 0 -> {
+                        toastError(R.string.subscription_update_error_disabled)
+                    }
+                    else -> {
+                        toastError(R.string.toast_failure)
+                    }
                 }
                 mainViewModel.reloadServerList()
                 subscriptionCardAdapter.reload()
-                hideLoading()
             }
         }
+    }
+
+    private fun selectFirstAvailableSubscription() {
+        val subscription = MmkvManager.decodeSubscriptions()
+            .firstOrNull { it.subscription.url.isNotBlank() } ?: return
+        selectSubscription(subscription)
     }
 
     private fun selectProfile(guid: String) {
@@ -1125,6 +1379,9 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         refreshSelectedProfile()
         updateConnectButtonAvailability()
         subscriptionCardAdapter.notifyProfileStatusChanged(guid)
+        subscriptionCardAdapter.setActiveSubscription(
+            MmkvManager.decodeServerConfig(guid)?.subscriptionId
+        )
         if (mainViewModel.isRunning.value == true) reloadV2Ray()
     }
 
@@ -1274,6 +1531,7 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
 
     override fun onNavigationItemSelected(item: MenuItem): Boolean {
+        if (AppFeatures.isConsumerBuild) return false
         // Handle navigation view item clicks here.
         when (item.itemId) {
             R.id.sub_setting -> requestActivityLauncher.launch(Intent(this, SubSettingActivity::class.java))

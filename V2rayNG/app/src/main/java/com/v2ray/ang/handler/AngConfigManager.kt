@@ -9,6 +9,7 @@ import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreConfigManager
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.core.WinterRoutingProfiles
+import com.v2ray.ang.dto.SubscriptionUpdateError
 import com.v2ray.ang.dto.SubscriptionUpdateResult
 import com.v2ray.ang.dto.UrlContentRequest
 import com.v2ray.ang.dto.entities.ProfileItem
@@ -529,84 +530,101 @@ object AngConfigManager {
      */
     fun updateConfigViaSub(it: SubscriptionCache): SubscriptionUpdateResult {
         try {
-            // Check if disabled
             if (!it.subscription.enabled) {
-                return SubscriptionUpdateResult(skipCount = 1)
+                return SubscriptionUpdateResult(skipCount = 1, error = SubscriptionUpdateError.DISABLED)
             }
 
-            // Validate subscription info
             if (TextUtils.isEmpty(it.guid)
                 || TextUtils.isEmpty(it.subscription.remarks)
                 || TextUtils.isEmpty(it.subscription.url)
             ) {
-                return SubscriptionUpdateResult(skipCount = 1)
+                return SubscriptionUpdateResult(skipCount = 1, error = SubscriptionUpdateError.INVALID_URL)
             }
 
             val url = HttpUtil.toIdnUrl(it.subscription.url)
             if (!Utils.isValidUrl(url)) {
-                return SubscriptionUpdateResult(failureCount = 1)
+                return SubscriptionUpdateResult(
+                    failureCount = 1,
+                    error = SubscriptionUpdateError.INVALID_URL,
+                )
             }
             if (!it.subscription.allowInsecureUrl) {
                 if (!Utils.isValidSubUrl(url)) {
-                    return SubscriptionUpdateResult(failureCount = 1)
+                    return SubscriptionUpdateResult(
+                        failureCount = 1,
+                        error = SubscriptionUpdateError.INVALID_URL,
+                    )
                 }
             }
-            LogUtil.i(AppConfig.TAG, url)
-            val userAgent = it.subscription.userAgent
             val proxyUsername = SettingsManager.getSocksUsername()
             val proxyPassword = SettingsManager.getSocksPassword()
+            val candidateUrls = SubscriptionUrlResolver.candidateUrls(url)
+            val fetchUserAgent = it.subscription.userAgent?.takeIf { ua -> ua.isNotBlank() }
+                ?: AppConfig.SUBSCRIPTION_FETCH_USER_AGENT
 
-            var response = try {
-                val httpPort = SettingsManager.getHttpPort()
-                HttpUtil.getUrlContentResponseWithUserAgent(
-                    UrlContentRequest(
-                        url = url,
-                        userAgent = userAgent,
-                        timeout = 15000,
-                        httpPort = httpPort,
-                        proxyUsername = proxyUsername,
-                        proxyPassword = proxyPassword
-                    )
+            var response: HttpUtil.UrlContentResponse? = null
+            var usedFallback = false
+            val attemptErrors = mutableListOf<String>()
+            for ((index, candidate) in candidateUrls.withIndex()) {
+                LogUtil.i(AppConfig.TAG, "Subscription fetch: $candidate")
+                val attempt = fetchSubscriptionResponse(
+                    candidate,
+                    fetchUserAgent,
+                    proxyUsername,
+                    proxyPassword,
                 )
-            } catch (e: Exception) {
-                LogUtil.e(AppConfig.ANG_PACKAGE, "Update subscription: proxy not ready or other error", e)
-                null
-            }
-            if (response?.content.isNullOrEmpty()) {
-                response = try {
-                    HttpUtil.getUrlContentResponseWithUserAgent(
-                        UrlContentRequest(
-                            url = url,
-                            userAgent = userAgent
-                        )
-                    )
-                } catch (e: Exception) {
-                    LogUtil.e(AppConfig.TAG, "Update subscription: Failed to get URL content with user agent", e)
-                    null
+                response = attempt.response
+                if (!response?.content.isNullOrEmpty()) {
+                    usedFallback = index > 0
+                    break
                 }
+                attemptErrors.add("${candidateUrls[index]} — ${attempt.failureReason}")
+            }
+            if (usedFallback) {
+                LogUtil.i(AppConfig.TAG, "Subscription fetched via fallback host")
             }
             val configText = response?.content.orEmpty()
             if (configText.isEmpty()) {
-                return SubscriptionUpdateResult(failureCount = 1)
+                return SubscriptionUpdateResult(
+                    failureCount = 1,
+                    error = SubscriptionUpdateError.EMPTY_RESPONSE,
+                    errorDetail = attemptErrors.joinToString("\n").ifBlank { url },
+                )
             }
 
             val count = parseConfigViaSub(configText, it.guid, false)
             if (count > 0) {
                 applySubscriptionMetadata(it.subscription, response?.headers.orEmpty())
                 it.subscription.lastUpdated = System.currentTimeMillis()
+                val normalized = SubscriptionUrlResolver.normalizeStoredUrl(it.subscription.url)
+                if (normalized != it.subscription.url) {
+                    it.subscription.url = normalized
+                }
                 MmkvManager.encodeSubscription(it.guid, it.subscription)
                 LogUtil.i(AppConfig.TAG, "Subscription updated: ${it.subscription.remarks}, $count configs")
+                SubscriptionUrlResolver.extractSubId(it.subscription.url)?.let { subId ->
+                    LampaSubscriptionMetadata.refreshFromApi(subId)?.let { snapshot ->
+                        LampaSubscriptionMetadata.applySnapshot(it.subscription, snapshot)
+                        MmkvManager.encodeSubscription(it.guid, it.subscription)
+                    }
+                }
                 return SubscriptionUpdateResult(
                     configCount = count,
                     successCount = 1
                 )
             } else {
-                // Got response but no valid configs parsed
-                return SubscriptionUpdateResult(failureCount = 1)
+                return SubscriptionUpdateResult(
+                    failureCount = 1,
+                    error = SubscriptionUpdateError.PARSE_FAILED,
+                )
             }
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to update config via subscription", e)
-            return SubscriptionUpdateResult(failureCount = 1)
+            return SubscriptionUpdateResult(
+                failureCount = 1,
+                error = SubscriptionUpdateError.UNKNOWN,
+                errorDetail = e.message,
+            )
         }
     }
 
@@ -659,7 +677,11 @@ object AngConfigManager {
         }
         val rawTitle = header("profile-title") ?: header("profile_title")
         if (!rawTitle.isNullOrBlank()) {
-            subscription.profileTitle = decodeProfileTitle(rawTitle)
+            val title = decodeProfileTitle(rawTitle).trim()
+            if (title.isNotEmpty()) {
+                subscription.profileTitle = title
+                subscription.remarks = title
+            }
         }
 
         val routingHeader = header("profile-routing")
@@ -675,6 +697,78 @@ object AngConfigManager {
                     LogUtil.w(AppConfig.TAG, "Failed to reload after Winter routing update", it)
                 }
             }
+        }
+
+        header("support-url")?.trim()?.takeIf { it.isNotBlank() }?.let {
+            subscription.supportUrl = it
+        }
+    }
+
+    private data class SubscriptionFetchAttempt(
+        val response: HttpUtil.UrlContentResponse?,
+        val failureReason: String,
+    )
+
+    private fun fetchSubscriptionResponse(
+        url: String,
+        userAgent: String?,
+        proxyUsername: String?,
+        proxyPassword: String?,
+    ): SubscriptionFetchAttempt {
+        val directRequest = UrlContentRequest(
+            url = url,
+            userAgent = userAgent,
+            timeout = 15000,
+            http1Only = true,
+        )
+        val proxyRequest = UrlContentRequest(
+            url = url,
+            userAgent = userAgent,
+            timeout = 4000,
+            httpPort = SettingsManager.getHttpPort(),
+            proxyUsername = proxyUsername,
+            proxyPassword = proxyPassword,
+            http1Only = true,
+        )
+
+        val viaProxy = if (SpeedtestManager.isLocalHttpInboundAvailable()) {
+            fetchSubscriptionAttempt(proxyRequest, "proxy")
+        } else {
+            null
+        }
+        if (!viaProxy?.response?.content.isNullOrEmpty()) return viaProxy!!
+
+        val direct = fetchSubscriptionAttempt(directRequest, "direct")
+        if (!direct.response?.content.isNullOrEmpty()) return direct
+
+        val reasons = listOfNotNull(
+            viaProxy?.failureReason?.takeIf { it.isNotBlank() },
+            direct.failureReason.takeIf { it.isNotBlank() },
+        ).joinToString("; ")
+        return SubscriptionFetchAttempt(null, reasons.ifBlank { "пустой ответ" })
+    }
+
+    private fun fetchSubscriptionAttempt(
+        request: UrlContentRequest,
+        via: String,
+    ): SubscriptionFetchAttempt {
+        return try {
+            val response = HttpUtil.getUrlContentResponseWithUserAgent(request)
+            if (response.content.isEmpty()) {
+                SubscriptionFetchAttempt(response, "пустой ответ ($via)")
+            } else {
+                SubscriptionFetchAttempt(response, "")
+            }
+        } catch (e: Exception) {
+            LogUtil.e(
+                AppConfig.TAG,
+                "Update subscription via $via: ${e.message}",
+                e,
+            )
+            SubscriptionFetchAttempt(
+                null,
+                (e.message?.takeIf { it.isNotBlank() } ?: "ошибка сети") + " ($via)",
+            )
         }
     }
 
@@ -693,8 +787,9 @@ object AngConfigManager {
 
     /** Adds exactly one subscription URL and returns it without importing arbitrary profile text. */
     fun addSubscription(url: String?): SubscriptionCache? {
-        val normalizedUrl = url?.trim()?.lineSequence()?.firstOrNull()?.trim()
-            ?.takeIf(Utils::isValidSubUrl) ?: return null
+        val normalizedUrl = SubscriptionUrlResolver.normalizeStoredUrl(
+            url?.trim()?.lineSequence()?.firstOrNull()?.trim().orEmpty(),
+        ).takeIf(Utils::isValidSubUrl) ?: return null
         val subscriptions = MmkvManager.decodeSubscriptions()
         subscriptions.forEach {
             if (it.subscription.url == normalizedUrl) {

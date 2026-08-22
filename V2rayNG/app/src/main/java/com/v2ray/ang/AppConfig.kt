@@ -24,6 +24,7 @@ object AppConfig {
     const val PREF_ROUTE_ONLY_ENABLED = "pref_route_only_enabled"
     const val PREF_PER_APP_PROXY = "pref_per_app_proxy"
     const val PREF_PER_APP_PROXY_SET = "pref_per_app_proxy_set"
+    const val PREF_SPLIT_TUNNEL_APP_CACHE = "pref_split_tunnel_app_cache"
     const val PREF_BYPASS_APPS = "pref_bypass_apps"
     const val PREF_LOCAL_DNS_ENABLED = "pref_local_dns_enabled"
     const val PREF_FAKE_DNS_ENABLED = "pref_fake_dns_enabled"
@@ -65,6 +66,8 @@ object AppConfig {
     const val SUBSCRIPTION_UPDATE_TASK_NAME = "subscription_updater"
     const val APP_UPDATE_TASK_NAME = "zimavpn_app_update_v1"
     const val GEO_BOOTSTRAP_TASK_NAME = "zima_geo_bootstrap_v5"
+    const val GEO_PERIODIC_TASK_NAME = "zima_geo_daily_update_v1"
+    const val GEO_MANUAL_TASK_NAME = "zima_geo_manual_update_v1"
     const val SUBSCRIPTION_MIN_INTERVAL_MINUTES = 15L
     /** Refresh all subscriptions every 6 hours while VPN/core is running in background. */
     const val SUBSCRIPTION_VPN_BACKGROUND_INTERVAL_MS = 6 * 60 * 60 * 1000L
@@ -155,6 +158,18 @@ object AppConfig {
     const val ANDROID_PACKAGE_NAME_LIST_URL = "$GITHUB_RAW_URL/2dust/androidpackagenamelist/master/proxy.txt"
     const val APP_URL = "$GITHUB_URL/VerentiX/WinterVPN"
     const val APP_API_URL = "https://api.github.com/repos/VerentiX/WinterVPN/releases"
+
+    /** Хоттабыч / Lampa subscription gateways. */
+    const val SUBSCRIPTION_PRIMARY_HOST = "gw.zizmos.ru"
+    const val SUBSCRIPTION_FALLBACK_HOST = "sub.subhotig.buzz"
+    const val SUBSCRIPTION_RESERVE_HOST = "v.hattabych.ru"
+    const val LAMPA_SITE_URL = "https://hattabych.ru"
+    const val LAMPA_APP_UPDATE_API_URL = "$LAMPA_SITE_URL/api/app/latest"
+    const val LAMPA_TELEGRAM_BOT = "hattabych_vpn_bot"
+    const val LAMPA_TELEGRAM_URL = "https://t.me/$LAMPA_TELEGRAM_BOT"
+    const val LAMPA_SUBSCRIPTION_USER_AGENT = "Lampa-Mobile"
+    /** User-Agent for /auto/ subscription downloads (not billing API). */
+    const val SUBSCRIPTION_FETCH_USER_AGENT = "Lampa-Subscription"
     const val APP_ISSUES_URL = "$APP_URL/issues"
     const val APP_WIKI_MODE = "$APP_URL/wiki/Mode"
     const val APP_PRIVACY_POLICY = "$GITHUB_RAW_URL/2dust/v2rayNG/master/CR.md"
@@ -204,6 +219,18 @@ object AppConfig {
     const val GEOSITE_COMPAT_DAT_SHA256 = "765b86e4b6aed5da1a206304b5500c7668687fa1df8e8322c8a4961e1b672190"
     const val GEOIP_COMPAT_DAT_SHA256 = "10056efb313bc89245e7900716a35e6afbe087284b14a0680b9ece6bd24544cb"
     const val GEOIP_ONLY_CN_PRIVATE_URL = "$GITHUB_RAW_URL/Loyalsoldier/geoip/release/$GEOIP_ONLY_CN_PRIVATE_DAT"
+
+    /** Moving release URLs used by the daily updater. Bundled pinned URLs remain the offline fallback. */
+    const val GEOIP_LATEST_URL =
+        "$GITHUB_RAW_URL/runetfreedom/russia-v2ray-rules-dat/release/$GEOIP_DAT"
+    const val GEOSITE_LATEST_URL =
+        "$GITHUB_RAW_URL/runetfreedom/russia-v2ray-rules-dat/release/$GEOSITE_DAT"
+    const val GEOIP_LATEST_SHA256_URL = "$GEOIP_LATEST_URL.sha256sum"
+    const val GEOSITE_LATEST_SHA256_URL = "$GEOSITE_LATEST_URL.sha256sum"
+    const val GEOSITE_COMPAT_LATEST_URL =
+        "$GITHUB_RAW_URL/hydraponique/roscomvpn-geosite/release/geosite.dat"
+    const val GEOIP_COMPAT_LATEST_URL =
+        "$GITHUB_RAW_URL/hydraponique/roscomvpn-geoip/release/geoip.dat"
 
     /** Ports and addresses for various services. */
     const val PORT_LOCAL_DNS = "10853"

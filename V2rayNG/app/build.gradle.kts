@@ -17,13 +17,13 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.v2ray.ang"
+        applicationId = "ru.hattabych.lampa"
         minSdk = 24
         targetSdk = 37
         // 10000 = 1.0.0. Keep increasing this value for every published APK.
-        // It is intentionally above the old v2rayNG code so Android accepts the rebrand as an update.
-        versionCode = 10205
-        versionName = "1.2.5"
+        // Lampa has its own package identity and release sequence.
+        versionCode = 10400
+        versionName = "1.4.0"
         multiDexEnabled = true
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
@@ -46,6 +46,7 @@ android {
         }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("boolean", "CONSUMER_MODE", "true")
     }
 
     buildTypes {
@@ -102,7 +103,7 @@ android {
                 .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
                 .forEach { output ->
                     val abi = output.getFilter("ABI") ?: "universal"
-                    output.outputFileName = "Winter_${variant.versionName}-fdroid_${abi}.apk"
+                    output.outputFileName = "Lampa_${variant.versionName}-fdroid_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (100 * variant.versionCode + versionCodes[abi]!!).plus(5000000)
@@ -122,7 +123,7 @@ android {
                     else
                         "universal"
 
-                    output.outputFileName = "Winter_${variant.versionName}_${abi}.apk"
+                    output.outputFileName = "Lampa_${variant.versionName}_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (1000000 * versionCodes[abi]!!).plus(variant.versionCode)
@@ -136,6 +137,12 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+    }
+
+    lint {
+        // Generate Signed APK runs lintVital by default; it adds ~30–90s and
+        // does not change the APK. Run Analyze → Inspect Code / lintDebug when needed.
+        checkReleaseBuilds = false
     }
 
     packaging {

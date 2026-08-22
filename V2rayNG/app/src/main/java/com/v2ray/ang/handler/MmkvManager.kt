@@ -1,6 +1,7 @@
 package com.v2ray.ang.handler
 
 import com.tencent.mmkv.MMKV
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.DEFAULT_SUBSCRIPTION_ID
 import com.v2ray.ang.AppConfig.PREF_IS_BOOTED
 import com.v2ray.ang.AppConfig.PREF_ROUTING_RULESET
@@ -668,6 +669,23 @@ object MmkvManager {
      */
     fun decodeSettingsBool(key: String): Boolean {
         return settingsStorage.decodeBool(key, false)
+    }
+
+    fun containsSettings(key: String): Boolean {
+        return settingsStorage.containsKey(key)
+    }
+
+    /**
+     * First-run defaults: bypass mode on, per-app split tunnel enabled.
+     * Empty app list still sends all traffic through the VPN.
+     */
+    fun ensureSplitTunnelDefaults() {
+        if (!containsSettings(AppConfig.PREF_BYPASS_APPS)) {
+            encodeSettings(AppConfig.PREF_BYPASS_APPS, true)
+        }
+        if (!containsSettings(AppConfig.PREF_PER_APP_PROXY)) {
+            encodeSettings(AppConfig.PREF_PER_APP_PROXY, true)
+        }
     }
 
     /**

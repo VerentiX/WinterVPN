@@ -24,6 +24,7 @@ class UrlSchemeActivity : BaseActivity() {
         setContentView(binding.root)
 
         try {
+            var handledPayment = false
             intent.apply {
                 if (action == Intent.ACTION_SEND) {
                     if ("text/plain" == type) {
@@ -45,6 +46,37 @@ class UrlSchemeActivity : BaseActivity() {
                             parseUri(shareUrl, uri?.fragment)
                         }
 
+                        "payment-success" -> {
+                            startActivity(
+                                Intent(this@UrlSchemeActivity, MainActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                                        Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                    putExtra(MainActivity.EXTRA_PAYMENT_SUCCESS, true)
+                                    val subId = data?.getQueryParameter("subId").orEmpty()
+                                    if (subId.isNotBlank()) {
+                                        putExtra(MainActivity.EXTRA_PAYMENT_SUB_ID, subId)
+                                    }
+                                },
+                            )
+                            handledPayment = true
+                        }
+
+                        "payment-fail" -> {
+                            val subId = intent.data?.getQueryParameter("subId").orEmpty()
+                            if (subId.isNotBlank()) {
+                                startActivity(
+                                    Intent(this@UrlSchemeActivity, RenewSubscriptionActivity::class.java)
+                                        .putExtra(RenewSubscriptionActivity.EXTRA_SUB_ID, subId),
+                                )
+                                toast(R.string.subscription_payment_fail_return)
+                                handledPayment = true
+                            } else {
+                                toastError(R.string.toast_failure)
+                            }
+                        }
+
                         else -> {
                             toastError(R.string.toast_failure)
                         }
@@ -52,7 +84,9 @@ class UrlSchemeActivity : BaseActivity() {
                 }
             }
 
-            startActivity(Intent(this, MainActivity::class.java))
+            if (!handledPayment) {
+                startActivity(Intent(this, MainActivity::class.java))
+            }
             finish()
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Error processing URL scheme", e)

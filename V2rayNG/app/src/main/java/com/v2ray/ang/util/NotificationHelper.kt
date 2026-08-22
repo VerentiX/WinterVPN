@@ -6,8 +6,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
+import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.work.ForegroundInfo
 import com.v2ray.ang.R
 import com.v2ray.ang.enums.NotificationChannelType
 
@@ -46,6 +48,33 @@ object NotificationHelper {
             builder.setContentIntent(contentIntent).setAutoCancel(true)
         }
         notificationManager.notify(channelType.notificationId, builder.build())
+    }
+
+    /** Notification used by long-running WorkManager downloads. */
+    fun progressForegroundInfo(
+        channelType: NotificationChannelType,
+        context: Context,
+        title: String,
+        content: String,
+        progress: Int,
+        indeterminate: Boolean = false,
+    ): ForegroundInfo {
+        ensureChannelCreated(channelType, context)
+        val notification = buildNotificationBuilder(channelType, context, title, content)
+            .setOngoing(true)
+            .setProgress(100, progress.coerceIn(0, 100), indeterminate)
+            .build()
+        // targetSdk 34+ rejects FGS type none. Geo/APK downloads are dataSync work;
+        // omitting the type crashes :bg on network reconnect (Wi‑Fi ↔ LTE).
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(
+                channelType.notificationId,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+        } else {
+            ForegroundInfo(channelType.notificationId, notification)
+        }
     }
 
     /**

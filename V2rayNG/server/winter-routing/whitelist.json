@@ -13,14 +13,13 @@
     "lknpd.nalog.ru": "213.24.64.181"
   },
   "DirectSites": [
-    "keyword:mtalk.google.com",
-    "domain:mtalk.google.com",
     "geosite:private",
     "geosite:whitelist"
   ],
   "DirectIp": [
     "geoip:private",
-    "geoip:whitelist"
+    "geoip:whitelist",
+    "geoip:ru"
   ],
   "ProxySites": [
     "domain:sberbank.ru",
@@ -31,9 +30,12 @@
     "domain:tbank.ru",
     "domain:tinkoff.ru",
     "domain:tinkoff.com",
-    "domain:tcsbank.ru"
+    "domain:tcsbank.ru",
+    "geosite:telegram"
   ],
-  "ProxyIp": [],
+  "ProxyIp": [
+    "geoip:telegram"
+  ],
   "BlockSites": [],
   "BlockIp": [],
   "DomainStrategy": "IPIfNonMatch",

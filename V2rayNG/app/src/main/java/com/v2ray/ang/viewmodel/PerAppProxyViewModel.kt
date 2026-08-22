@@ -59,6 +59,7 @@ class PerAppProxyViewModel : ViewModel() {
 
     private fun save() {
         MmkvManager.encodeSettings(AppConfig.PREF_PER_APP_PROXY_SET, blacklist)
+        MmkvManager.encodeSettings(AppConfig.PREF_PER_APP_PROXY, true)
         SettingsChangeManager.makeRestartService()
     }
 }

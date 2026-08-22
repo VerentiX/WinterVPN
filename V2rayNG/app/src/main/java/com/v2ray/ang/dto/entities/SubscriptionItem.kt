@@ -1,5 +1,7 @@
 package com.v2ray.ang.dto.entities
 
+import com.v2ray.ang.dto.LampaPackage
+
 data class SubscriptionItem(
     var remarks: String = "",
     var url: String = "",
@@ -20,5 +22,13 @@ data class SubscriptionItem(
     var totalBytes: Long = -1,
     /** Unix time in seconds, as defined by Subscription-Userinfo. */
     var expireAt: Long = -1,
+    /** End of the current traffic window (unix seconds). Whole subscription uses expireAt. */
+    var packageEndsAt: Long = -1,
+    var currentPackageId: Long = 0,
+    var packages: List<LampaPackage>? = null,
+    /** Optional support link from subscription response headers. */
+    var supportUrl: String? = null,
+    /** App-managed two-day emergency access. Removed when a normal subscription is imported. */
+    var isTrial: Boolean = false,
 )
 

@@ -21,6 +21,7 @@ import com.v2ray.ang.extension.toast
 import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.GeoAssetUpdater
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
@@ -170,32 +171,8 @@ class UserAssetActivity : HelperBaseActivity() {
     }
 
     private fun downloadGeoFiles() {
-        refreshData()
-        showLoading()
-        toast(R.string.msg_downloading_content)
-
-        val proxyUsername = SettingsManager.getSocksUsername()
-        val proxyPassword = SettingsManager.getSocksPassword()
-        val httpPort = SettingsManager.getHttpPort()
-        lifecycleScope.launch(Dispatchers.IO) {
-            val result = viewModel.downloadGeoFiles(extDir, httpPort, proxyUsername, proxyPassword)
-            withContext(Dispatchers.Main) {
-                if (result.successCount > 0) {
-                    toast(getString(R.string.title_update_config_count, result.successCount))
-                    val routingFilesUpdated = listOf(AppConfig.GEOSITE_DAT, AppConfig.GEOIP_DAT)
-                        .none(result.failedAssets::contains)
-                    if (routingFilesUpdated) {
-                        // A running core keeps GeoSite/GeoIP in memory, so apply the new
-                        // databases with the same soft reload used for profile changes.
-                        CoreServiceManager.reloadVService(this@UserAssetActivity)
-                    }
-                } else {
-                    toast(getString(R.string.toast_failure))
-                }
-                refreshData()
-                hideLoading()
-            }
-        }
+        GeoAssetUpdater.forceUpdate(this, reconnectAfterUpdate = false)
+        toast(R.string.geo_update_checking)
     }
 
     fun initAssets() {

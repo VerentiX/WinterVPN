@@ -4,8 +4,11 @@ import android.content.Context
 import android.os.ParcelFileDescriptor
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.contracts.Tun2SocksControl
+import com.v2ray.ang.core.CoreServiceManager
+import com.v2ray.ang.core.RoscomPriorityRouting
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
+import com.v2ray.ang.util.DebugDiagnostics
 import com.v2ray.ang.util.LogUtil
 import java.io.File
 
@@ -40,10 +43,87 @@ class TProxyService(
         }
 
         /**
-         * Stops the in-process hev worker even when the Kotlin wrapper was lost
-         * after a timed-out handover stop.
+         * One JNI thread for Start and Stop. A second thread calling Start
+         * while Stop is still in pthread_join deadlocks on hev's mutex, and
+         * establish() of a new TUN can reuse the old fd while the worker lives.
          */
-        fun stopNativeTunnel() {
+        private val hevJniExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "hev-jni").apply { isDaemon = true }
+        }
+        private val hevJniGate = Any()
+        @Volatile
+        private var pendingStop: java.util.concurrent.Future<Boolean>? = null
+
+        /**
+         * Quit+join hev. After [wakeAfterMs] invoke [onStuck] (close TUN so the
+         * worker sees EOF). Do not return until JNI Stop actually finished:
+         * establishing a new TUN while the worker still holds the old fd number
+         * blackholes Telegram.
+         */
+        fun stopNativeTunnel(
+            wakeAfterMs: Long = 2_000L,
+            joinGiveUpMs: Long = 8_000L,
+            onStuck: (() -> Unit)? = null,
+        ): Boolean {
+            val future = synchronized(hevJniGate) {
+                val existing = pendingStop
+                if (existing != null && !existing.isDone) {
+                    existing
+                } else {
+                    hevJniExecutor.submit(
+                        java.util.concurrent.Callable {
+                            try {
+                                stopNativeTunnelImmediate()
+                                true
+                            } finally {
+                                synchronized(hevJniGate) { pendingStop = null }
+                            }
+                        },
+                    ).also { pendingStop = it }
+                }
+            }
+            return try {
+                try {
+                    future.get(wakeAfterMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    true
+                } catch (_: java.util.concurrent.TimeoutException) {
+                    LogUtil.e(
+                        AppConfig.TAG,
+                        "hev-socks5-tunnel join still running after ${wakeAfterMs}ms",
+                    )
+                    onStuck?.invoke()
+                    try {
+                        future.get(joinGiveUpMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        true
+                    } catch (_: java.util.concurrent.TimeoutException) {
+                        LogUtil.e(
+                            AppConfig.TAG,
+                            "hev join still running after TUN close; refusing a second worker",
+                        )
+                        false
+                    }
+                }
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "hev-socks5-tunnel stop failed", e)
+                false
+            }
+        }
+
+        fun isHevStopPending(): Boolean {
+            val stop = pendingStop
+            return stop != null && !stop.isDone
+        }
+
+        fun startNativeTunnel(configPath: String, fd: Int) {
+            if (isHevStopPending()) {
+                throw IllegalStateException("hev Stop still joining; refusing Start")
+            }
+            hevJniExecutor.submit {
+                TProxyStartService(configPath, fd)
+            }.get()
+        }
+
+        private fun stopNativeTunnelImmediate() {
             try {
                 TProxyStopService()
             } catch (e: Exception) {
@@ -52,6 +132,7 @@ class TProxyService(
         }
 
         fun isNativeTunnelRunning(): Boolean {
+            if (isHevStopPending()) return true
             return try {
                 TProxyIsServiceRunning()
             } catch (e: Exception) {
@@ -65,14 +146,12 @@ class TProxyService(
     }
 
     /**
-     * Starts the tun2socks process with the appropriate parameters.
+     * Restart hev on the same TUN fd. JNI TProxyStartService already
+     * quit+joins the worker if it is running, then starts a new one.
+     * Do not wrap Start in a timed executor: interrupting JNI during
+     * tcp_slowtmr/pbuf_free aborted the VPN process (SIGABRT).
      */
     override fun startTun2Socks(): Boolean {
-        // A timed-out handover can leave the native worker alive while Kotlin
-        // already dropped [tun2SocksService]. Without this stop, TProxyStartService
-        // silently no-ops when is_working is still set in hev-jni.c.
-        stopNativeTunnel()
-
         val configContent = buildConfig()
         val configFile = File(context.filesDir, "hev-socks5-tunnel.yaml").apply {
             writeText(configContent)
@@ -80,10 +159,10 @@ class TProxyService(
         LogUtil.d(AppConfig.TAG, "HevSocks5Tunnel Config content:\n$configContent")
 
         return try {
-            TProxyStartService(configFile.absolutePath, vpnInterface.fd)
+            startNativeTunnel(configFile.absolutePath, vpnInterface.fd)
             repeat(HEV_START_CONFIRM_ATTEMPTS) { attempt ->
                 if (isNativeTunnelRunning()) {
-                    LogUtil.i(AppConfig.TAG, "HevSocks5Tunnel started on fd=${vpnInterface.fd}")
+                    LogUtil.transport("HevSocks5Tunnel started on fd=${vpnInterface.fd}")
                     return true
                 }
                 if (attempt + 1 < HEV_START_CONFIRM_ATTEMPTS) {
@@ -91,7 +170,6 @@ class TProxyService(
                 }
             }
             LogUtil.e(AppConfig.TAG, "HevSocks5Tunnel worker exited immediately after start")
-            stopNativeTunnel()
             false
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "HevSocks5Tunnel exception: ${e.message}", e)
@@ -100,7 +178,15 @@ class TProxyService(
     }
 
     private fun buildConfig(): String {
-        val socksPort = SettingsManager.getSocksPort()
+        val routingMode = CoreServiceManager.getActiveRoutingMode()
+        val socksPort = RoscomPriorityRouting.tunSocksPort(
+            routingMode,
+            SettingsManager.getSocksPort(),
+        )
+        LogUtil.transport(
+            "Hev SOCKS port=$socksPort mode=${routingMode ?: "FULL"} " +
+                "(p0=mixed, p5+=${RoscomPriorityRouting.INBOUND_WHITELIST})"
+        )
         val socksUsername = SettingsManager.getSocksUsername()
         val socksPassword = SettingsManager.getSocksPassword()
         val vpnConfig = SettingsManager.getCurrentVpnInterfaceAddressConfig()
@@ -135,7 +221,7 @@ class TProxyService(
             appendLine("misc:")
             appendLine("  tcp-read-write-timeout: ${tcpTimeout * 1000}")
             appendLine("  udp-read-write-timeout: ${udpTimeout * 1000}")
-            appendLine("  log-level: ${MmkvManager.decodeSettingsString(AppConfig.PREF_HEV_TUNNEL_LOGLEVEL) ?: "warn"}")
+            appendLine("  log-level: ${DebugDiagnostics.effectiveHevLogLevel()}")
         }
     }
 

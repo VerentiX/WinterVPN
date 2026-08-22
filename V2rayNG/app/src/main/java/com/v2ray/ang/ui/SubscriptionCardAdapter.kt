@@ -1,18 +1,23 @@
 package com.v2ray.ang.ui
 
 import android.annotation.SuppressLint
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.AppFeatures
 import com.v2ray.ang.R
 import com.v2ray.ang.databinding.ItemSubscriptionCardMainBinding
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.dto.entities.SubscriptionCache
 import com.v2ray.ang.extension.toTrafficString
+import com.v2ray.ang.handler.LampaSubscriptionMetadata
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.SubscriptionUrlResolver
 import com.v2ray.ang.util.Utils
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -29,6 +34,8 @@ class SubscriptionCardAdapter(
         fun onUpdateSubscription(subscription: SubscriptionCache)
         fun onMeasureSubscription(subscriptionId: String)
         fun onEditSubscription(subscriptionId: String)
+        fun onSelectSubscription(subscription: SubscriptionCache)
+        fun onRenewSubscription(subscription: SubscriptionCache)
     }
 
     private data class ProfileEntry(val guid: String, val profile: ProfileItem)
@@ -39,6 +46,7 @@ class SubscriptionCardAdapter(
     /** Opt-in expand; empty means all cards are collapsed. */
     private val expanded = mutableSetOf<String>()
     private val visibleLimits = mutableMapOf<String, Int>()
+    private var activeSubscriptionId: String? = null
 
     @SuppressLint("NotifyDataSetChanged")
     fun reload(filter: String = query) {
@@ -68,7 +76,18 @@ class SubscriptionCardAdapter(
                     CardEntry(subscription, visibleProfiles)
                 } else null
             }
+        activeSubscriptionId = resolveActiveSubscriptionId()
         notifyDataSetChanged()
+    }
+
+    fun setActiveSubscription(subscriptionId: String?) {
+        activeSubscriptionId = subscriptionId
+        notifyDataSetChanged()
+    }
+
+    private fun resolveActiveSubscriptionId(): String? {
+        val selected = MmkvManager.getSelectServer() ?: return null
+        return MmkvManager.decodeServerConfig(selected)?.subscriptionId
     }
 
     fun indexOfSubscription(subscriptionId: String): Int =
@@ -83,6 +102,7 @@ class SubscriptionCardAdapter(
     /** Update delay/selection texts without rebuilding the whole card list. */
     fun notifyProfileStatusChanged(guid: String? = null) {
         val selected = MmkvManager.getSelectServer()
+        activeSubscriptionId = resolveActiveSubscriptionId()
         cards.forEachIndexed { index, card ->
             if (guid == null || card.profiles.any { it.guid == guid } ||
                 card.profiles.any { it.guid == selected }
@@ -113,45 +133,89 @@ class SubscriptionCardAdapter(
         val card = cards[position]
         val item = card.subscription.subscription
         val context = holder.binding.root.context
-        val isExpanded = expanded.contains(card.subscription.guid)
+        val consumer = AppFeatures.isConsumerBuild
+        val isExpanded = !consumer && expanded.contains(card.subscription.guid)
         val limit = visibleLimits[card.subscription.guid] ?: INITIAL_VISIBLE_PROFILES
+        val isActive = card.subscription.guid == activeSubscriptionId
 
-        holder.binding.subscriptionName.text = item.profileTitle?.takeIf { it.isNotBlank() } ?: item.remarks
-        val updateMeta = if (item.lastUpdated > 0) {
-            context.getString(
-                R.string.subscription_updated_at,
-                Utils.formatTimestamp(item.lastUpdated),
-                card.profiles.size
-            )
+        val tariff = LampaSubscriptionMetadata.tariffLabelForItem(item)
+            ?: context.getString(R.string.subscription_tariff_unknown)
+        holder.binding.subscriptionName.text =
+            item.profileTitle?.takeIf { it.isNotBlank() }
+                ?: item.remarks.ifBlank { context.getString(R.string.subscription_default_name) }
+
+        if (consumer) {
+            holder.binding.subscriptionMeta.text = context.getString(R.string.subscription_tariff_label, tariff)
+            holder.binding.subscriptionMeta.visibility = View.VISIBLE
         } else {
-            context.getString(R.string.subscription_never_updated, card.profiles.size)
-        }
-        val autoUpdateMeta = if (item.autoUpdate) {
-            val interval = if (item.updateInterval % 60L == 0L) {
-                context.getString(R.string.subscription_interval_hours, item.updateInterval / 60L)
+            val updateMeta = if (item.lastUpdated > 0) {
+                context.getString(
+                    R.string.subscription_updated_at,
+                    Utils.formatTimestamp(item.lastUpdated),
+                    card.profiles.size
+                )
             } else {
-                context.getString(R.string.subscription_interval_minutes, item.updateInterval)
+                context.getString(R.string.subscription_never_updated, card.profiles.size)
             }
-            context.getString(R.string.subscription_auto_update_interval, interval)
-        } else {
-            context.getString(R.string.subscription_auto_update_off)
+            val autoUpdateMeta = if (item.autoUpdate) {
+                val interval = if (item.updateInterval % 60L == 0L) {
+                    context.getString(R.string.subscription_interval_hours, item.updateInterval / 60L)
+                } else {
+                    context.getString(R.string.subscription_interval_minutes, item.updateInterval)
+                }
+                context.getString(R.string.subscription_auto_update_interval, interval)
+            } else {
+                context.getString(R.string.subscription_auto_update_off)
+            }
+            holder.binding.subscriptionMeta.text = "$updateMeta · $autoUpdateMeta"
         }
-        holder.binding.subscriptionMeta.text = "$updateMeta · $autoUpdateMeta"
+
         val hasTraffic = item.uploadBytes >= 0 || item.downloadBytes >= 0 || item.totalBytes >= 0
         val used = item.uploadBytes.coerceAtLeast(0) + item.downloadBytes.coerceAtLeast(0)
-        holder.binding.trafficContainer.visibility = if (hasTraffic) View.VISIBLE else View.GONE
-        holder.binding.subscriptionTrafficText.text = if (item.totalBytes > 0) {
-            context.getString(R.string.subscription_traffic_compact, used.toTrafficString(), item.totalBytes.toTrafficString())
-        } else {
-            context.getString(R.string.subscription_traffic_unlimited, used.toTrafficString())
+        holder.binding.trafficContainer.visibility = when {
+            consumer -> View.VISIBLE
+            hasTraffic -> View.VISIBLE
+            else -> View.GONE
+        }
+        holder.binding.subscriptionTrafficText.text = when {
+            item.totalBytes > 0 -> {
+                context.getString(
+                    R.string.subscription_traffic_compact,
+                    used.toTrafficString(),
+                    item.totalBytes.toTrafficString(),
+                )
+            }
+            hasTraffic -> {
+                context.getString(R.string.subscription_traffic_unlimited, used.toTrafficString())
+            }
+            consumer -> context.getString(R.string.subscription_traffic_unknown)
+            else -> context.getString(R.string.subscription_traffic_unlimited, used.toTrafficString())
         }
         holder.binding.subscriptionTrafficProgress.progress = if (item.totalBytes > 0) {
             ((used.toDouble() / item.totalBytes.toDouble()) * 10_000.0).toInt().coerceIn(0, 10_000)
         } else 0
 
-        val hasExpiry = item.expireAt > 0
-        holder.binding.subscriptionExpiry.visibility = if (hasExpiry) View.VISIBLE else View.GONE
-        if (hasExpiry) {
+        val currentDays = LampaSubscriptionMetadata.currentDaysLeft(item)
+        val totalDays = LampaSubscriptionMetadata.totalDaysLeft(item)
+        val visiblePackages = LampaSubscriptionMetadata.visiblePackages(item)
+        val hasCurrentWindow = currentDays >= 0 || item.packageEndsAt > 0
+        val hasExpiry = item.expireAt > 0 || hasCurrentWindow
+        holder.binding.subscriptionExpiry.visibility = if (hasExpiry || consumer) View.VISIBLE else View.GONE
+        if (consumer) {
+            val nextUpcoming = visiblePackages.firstOrNull { it.upcoming }
+            holder.binding.subscriptionExpiry.text = when {
+                currentDays > 0 -> context.getString(R.string.subscription_days_left, currentDays)
+                nextUpcoming != null -> context.getString(
+                    R.string.subscription_next_starts,
+                    LampaSubscriptionMetadata.formatStartDay(nextUpcoming.startsAt),
+                )
+                item.expireAt > 0 && totalDays > 0 ->
+                    context.getString(R.string.subscription_days_left, totalDays)
+                item.expireAt > 0 || item.packageEndsAt > 0 ->
+                    context.getString(R.string.subscription_expired)
+                else -> context.getString(R.string.subscription_tariff_unknown)
+            }
+        } else if (item.expireAt > 0) {
             val secondsLeft = item.expireAt - System.currentTimeMillis() / 1000L
             holder.binding.subscriptionExpiry.text = if (secondsLeft <= 0) {
                 context.getString(R.string.subscription_expired)
@@ -161,21 +225,88 @@ class SubscriptionCardAdapter(
                 context.getString(R.string.subscription_expires_at, date, days)
             }
         }
-        holder.binding.subscriptionDetails.visibility = if (hasTraffic || hasExpiry) View.VISIBLE else View.GONE
-        holder.binding.expandIcon.rotation = if (isExpanded) 180f else 0f
-        holder.binding.profileContainer.visibility = if (isExpanded) View.VISIBLE else View.GONE
-        holder.binding.updateSubscription.visibility = if (item.url.isBlank()) View.INVISIBLE else View.VISIBLE
-        holder.binding.measureSubscription.visibility =
-            if (card.profiles.isEmpty()) View.GONE else View.VISIBLE
 
-        val toggle = View.OnClickListener { toggleExpanded(holder, card.subscription.guid) }
-        holder.binding.expandIcon.setOnClickListener(toggle)
-        holder.binding.subscriptionName.setOnClickListener(toggle)
-        holder.binding.subscriptionMeta.setOnClickListener(toggle)
-        holder.binding.subscriptionDetails.setOnClickListener(toggle)
-        holder.binding.updateSubscription.setOnClickListener {
-            listener.onUpdateSubscription(card.subscription)
+        if (consumer) {
+            SubscriptionPackageViews.bind(
+                holder.binding.packageList,
+                holder.binding.packagesHeader,
+                visiblePackages,
+            )
+            val showTotal = totalDays > currentDays && totalDays > 0 && visiblePackages.any { it.upcoming }
+            holder.binding.subscriptionUntil.visibility = if (showTotal) View.VISIBLE else View.GONE
+            if (showTotal) {
+                holder.binding.subscriptionUntil.text =
+                    context.getString(R.string.subscription_until_total, totalDays)
+            }
+        } else {
+            holder.binding.packageList.visibility = View.GONE
+            holder.binding.packagesHeader.visibility = View.GONE
+            holder.binding.subscriptionUntil.visibility = View.GONE
         }
+
+        val storedTrialSubId = MmkvManager.decodeSettingsString("LAMPA_TRIAL_SUB_ID").orEmpty()
+        val isTrial = item.isTrial || (
+            storedTrialSubId.isNotBlank() && SubscriptionUrlResolver.extractSubId(item.url) == storedTrialSubId
+        )
+        val showRenew = consumer && !isTrial && SubscriptionUrlResolver.isManagedSubscriptionUrl(item.url)
+        holder.binding.subscriptionRenew.visibility = if (showRenew) View.VISIBLE else View.GONE
+        holder.binding.subscriptionRenew.setOnClickListener {
+            listener.onRenewSubscription(card.subscription)
+        }
+
+        if (consumer) {
+            holder.binding.updateSubscription.visibility =
+                if (item.url.isBlank()) View.GONE else View.VISIBLE
+            holder.binding.updateSubscription.setImageResource(R.drawable.ic_refresh_24dp)
+            holder.binding.updateSubscription.contentDescription =
+                context.getString(R.string.title_sub_update)
+            holder.binding.updateSubscription.setOnClickListener {
+                listener.onUpdateSubscription(card.subscription)
+            }
+        } else {
+            holder.binding.expandIcon.visibility = View.VISIBLE
+            holder.binding.updateSubscription.visibility = if (item.url.isBlank()) View.INVISIBLE else View.VISIBLE
+            holder.binding.updateSubscription.setImageResource(R.drawable.ic_refresh_24dp)
+            holder.binding.updateSubscription.contentDescription =
+                context.getString(R.string.title_sub_update)
+            holder.binding.updateSubscription.setOnClickListener {
+                listener.onUpdateSubscription(card.subscription)
+            }
+            holder.binding.measureSubscription.visibility =
+                if (card.profiles.isNotEmpty()) View.VISIBLE else View.GONE
+        }
+
+        if (consumer) {
+            holder.binding.subscriptionDetails.visibility = View.VISIBLE
+        } else {
+            holder.binding.subscriptionDetails.visibility =
+                if (hasTraffic || hasExpiry) View.VISIBLE else View.GONE
+        }
+
+        holder.binding.root.strokeWidth = if (consumer && isActive) 2 else 1
+        val stroke = if (consumer && isActive) {
+            context.getColor(R.color.md_theme_secondary)
+        } else {
+            Color.parseColor("#33FFFFFF")
+        }
+        holder.binding.root.setStrokeColor(ColorStateList.valueOf(stroke))
+
+        holder.binding.expandIcon.rotation = if (isExpanded) 180f else 0f
+        if (!consumer) {
+            holder.binding.profileContainer.visibility = if (isExpanded) View.VISIBLE else View.GONE
+        }
+
+        val headerClick = View.OnClickListener {
+            if (consumer) {
+                listener.onSelectSubscription(card.subscription)
+            } else {
+                toggleExpanded(holder, card.subscription.guid)
+            }
+        }
+        holder.binding.expandIcon.setOnClickListener(headerClick)
+        holder.binding.subscriptionName.setOnClickListener(headerClick)
+        holder.binding.subscriptionMeta.setOnClickListener(headerClick)
+        holder.binding.subscriptionDetails.setOnClickListener(headerClick)
         holder.binding.measureSubscription.setOnClickListener {
             listener.onMeasureSubscription(card.subscription.guid)
         }
@@ -218,7 +349,7 @@ class SubscriptionCardAdapter(
     }
 
     private fun bindStatus(holder: CardViewHolder, card: CardEntry) {
-        if (!expanded.contains(card.subscription.guid)) return
+        if (AppFeatures.isConsumerBuild || !expanded.contains(card.subscription.guid)) return
         val selected = MmkvManager.getSelectServer()
         val limit = visibleLimits[card.subscription.guid] ?: INITIAL_VISIBLE_PROFILES
         val visible = card.profiles.take(limit)

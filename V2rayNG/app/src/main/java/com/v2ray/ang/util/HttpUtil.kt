@@ -6,6 +6,7 @@ import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.dto.UrlContentRequest
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
@@ -117,7 +118,14 @@ object HttpUtil {
      */
     fun getUrlContent(request: UrlContentRequest): String? {
         val url = request.url ?: return null
-        val client = buildOkHttpClient(request.timeout, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = true)
+        val client = buildOkHttpClient(
+            request.timeout,
+            request.httpPort,
+            request.proxyUsername,
+            request.proxyPassword,
+            followRedirects = true,
+            http1Only = request.http1Only,
+        )
         val requestBuilder = Request.Builder()
             .url(url)
             .get()
@@ -163,7 +171,14 @@ object HttpUtil {
 
         while (redirects++ < maxRedirects) {
             if (currentUrl == null) continue
-            val client = buildOkHttpClient(request.timeout, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = false)
+            val client = buildOkHttpClient(
+                request.timeout,
+                request.httpPort,
+                request.proxyUsername,
+                request.proxyPassword,
+                followRedirects = false,
+                http1Only = request.http1Only,
+            )
             val finalUserAgent = if (request.userAgent.isNullOrBlank()) {
                 "Lampa-Mobile/${BuildConfig.VERSION_NAME}"
             } else {
@@ -241,13 +256,18 @@ object HttpUtil {
         httpPort: Int,
         proxyUsername: String?,
         proxyPassword: String?,
-        followRedirects: Boolean
+        followRedirects: Boolean,
+        http1Only: Boolean = false,
     ): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(timeout.toLong(), TimeUnit.MILLISECONDS)
             .readTimeout(timeout.toLong(), TimeUnit.MILLISECONDS)
             .followRedirects(followRedirects)
             .followSslRedirects(followRedirects)
+
+        if (http1Only) {
+            builder.protocols(listOf(Protocol.HTTP_1_1))
+        }
 
         if (httpPort != 0) {
             builder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(LOOPBACK, httpPort)))
@@ -293,7 +313,14 @@ object HttpUtil {
         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null,
     ): Boolean {
         val url = request.url ?: return false
-        val client = buildOkHttpClient(request.timeout, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = true)
+        val client = buildOkHttpClient(
+            request.timeout,
+            request.httpPort,
+            request.proxyUsername,
+            request.proxyPassword,
+            followRedirects = true,
+            http1Only = request.http1Only,
+        )
         val existingBytes = if (resume && targetFile.exists()) targetFile.length().coerceAtLeast(0L) else 0L
         if (!resume && targetFile.exists()) {
             targetFile.delete()
@@ -338,6 +365,7 @@ object HttpUtil {
                 }
 
                 val append = resumeAccepted && targetFile.exists()
+                var finalDownloadedBytes = if (append) existingBytes else 0L
                 body.byteStream().use { input ->
                     FileOutputStream(targetFile, append).use { output ->
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -350,9 +378,17 @@ object HttpUtil {
                             downloadedBytes += read
                             onProgress?.invoke(downloadedBytes, totalBytes)
                         }
+                        finalDownloadedBytes = downloadedBytes
                     }
                 }
-                true
+                val complete = totalBytes <= 0L || finalDownloadedBytes == totalBytes
+                if (!complete) {
+                    LogUtil.w(
+                        AppConfig.TAG,
+                        "Incomplete download kept for resume: $finalDownloadedBytes/$totalBytes, url=$url"
+                    )
+                }
+                complete
             }
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to download file: $url", e)

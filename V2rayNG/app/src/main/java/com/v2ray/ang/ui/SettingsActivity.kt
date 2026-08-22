@@ -12,6 +12,8 @@ import androidx.preference.PreferenceFragmentCompat
 import androidx.appcompat.app.AlertDialog
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.VPN
+import com.v2ray.ang.AppFeatures
+import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.core.PriorityFailoverManager
@@ -95,6 +97,17 @@ class SettingsActivity : BaseActivity() {
             preferenceManager.preferenceDataStore = MmkvPreferenceDataStore()
 
             addPreferencesFromResource(R.xml.pref_settings)
+            if (BuildConfig.DEBUG) {
+                addPreferencesFromResource(R.xml.pref_settings_debug)
+            }
+
+            if (AppFeatures.isConsumerBuild) {
+                showRoutingMode?.isVisible = false
+                if (showRoutingMode?.isChecked == true) {
+                    MmkvManager.encodeSettings(AppConfig.PREF_NOTIFICATION_SHOW_ROUTING_MODE, false)
+                    NotificationManager.refreshConnectionDetails()
+                }
+            }
 
             initPreferenceSummaries()
             updatePriorityProbeIntervalsSummary()
@@ -123,7 +136,11 @@ class SettingsActivity : BaseActivity() {
 
             fun updateConnectionJournalAvailability(enabled: Boolean) {
                 connectionJournal?.isEnabled = enabled
-                connectionJournal?.summary = if (enabled) "Показать соединения, зафиксированные с момента включения." else "Сначала включите диагностику приложений."
+                connectionJournal?.summary = if (enabled) {
+                    getString(R.string.summary_pref_connection_journal)
+                } else {
+                    getString(R.string.summary_pref_connection_journal_disabled)
+                }
             }
             updateConnectionJournalAvailability(connectionDiagnostics?.isChecked == true)
             connectionDiagnostics?.setOnPreferenceChangeListener { _, value ->
@@ -142,7 +159,7 @@ class SettingsActivity : BaseActivity() {
             }
             connectionJournal?.setOnPreferenceClickListener {
                 AlertDialog.Builder(requireContext())
-                    .setTitle("Журнал соединений")
+                    .setTitle(R.string.title_pref_connection_journal)
                     .setMessage(ConnectionJournal.summary())
                     .setNegativeButton("Закрыть", null)
                     .setPositiveButton("Очистить") { _, _ -> ConnectionJournal.clear() }

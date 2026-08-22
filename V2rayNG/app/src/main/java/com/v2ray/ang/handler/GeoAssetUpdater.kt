@@ -1,34 +1,24 @@
 package com.v2ray.ang.handler
 
 import android.content.Context
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
-import androidx.work.CoroutineWorker
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkerParameters
-import androidx.work.workDataOf
+import androidx.work.*
 import androidx.work.multiprocess.RemoteWorkManager
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.dto.UrlContentRequest
+import com.v2ray.ang.enums.NotificationChannelType
 import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.NotificationHelper
 import com.v2ray.ang.util.Utils
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Installs checksum-verified GeoSite/GeoIP assets, retaining APK assets as fallback. */
+/** Durable daily GeoSite/GeoIP updater; APK assets remain the offline fallback. */
 object GeoAssetUpdater {
     const val PROGRESS_PERCENT = "geo_progress_percent"
     const val INPUT_FORCE = "geo_force_update"
@@ -38,33 +28,32 @@ object GeoAssetUpdater {
     private const val FORCE_COOLDOWN_MS = 5 * 60 * 1000L
     @Volatile private var lastForcedUpdateAt = 0L
 
-    private data class RemoteAsset(val name: String, val url: String, val checksum: String)
-
+    private data class RemoteAsset(val name: String, val url: String, val checksumUrl: String? = null)
     private val remoteAssets = listOf(
-        RemoteAsset(AppConfig.GEOSITE_DAT, AppConfig.GEOSITE_DAT_URL, AppConfig.GEOSITE_DAT_SHA256),
-        RemoteAsset(
-            AppConfig.GEOSITE_COMPAT_DAT,
-            AppConfig.GEOSITE_COMPAT_DAT_URL,
-            AppConfig.GEOSITE_COMPAT_DAT_SHA256
-        ),
-        RemoteAsset(AppConfig.GEOIP_DAT, AppConfig.GEOIP_DAT_URL, AppConfig.GEOIP_DAT_SHA256),
-        RemoteAsset(
-            AppConfig.GEOIP_COMPAT_DAT,
-            AppConfig.GEOIP_COMPAT_DAT_URL,
-            AppConfig.GEOIP_COMPAT_DAT_SHA256
-        ),
+        RemoteAsset(AppConfig.GEOSITE_DAT, AppConfig.GEOSITE_LATEST_URL, AppConfig.GEOSITE_LATEST_SHA256_URL),
+        RemoteAsset(AppConfig.GEOSITE_COMPAT_DAT, AppConfig.GEOSITE_COMPAT_LATEST_URL),
+        RemoteAsset(AppConfig.GEOIP_DAT, AppConfig.GEOIP_LATEST_URL, AppConfig.GEOIP_LATEST_SHA256_URL),
+        RemoteAsset(AppConfig.GEOIP_COMPAT_DAT, AppConfig.GEOIP_COMPAT_LATEST_URL),
     )
+
+    fun schedule(context: Context) {
+        val request = PeriodicWorkRequestBuilder<UpdateTask>(24, TimeUnit.HOURS, 1, TimeUnit.HOURS)
+            .setConstraints(connectedConstraint())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .setInputData(workDataOf(INPUT_FORCE to false, INPUT_RECONNECT to false))
+            .addTag(AppConfig.GEO_PERIODIC_TASK_NAME).build()
+        RemoteWorkManager.getInstance(context.applicationContext).enqueueUniquePeriodicWork(
+            AppConfig.GEO_PERIODIC_TASK_NAME, ExistingPeriodicWorkPolicy.KEEP, request
+        )
+    }
 
     fun scheduleFirstInstall(context: Context): Boolean {
         if (MmkvManager.decodeSettingsBool(AppConfig.PREF_GEO_BOOTSTRAP_COMPLETE, false)) return false
-        if (MmkvManager.decodeSettingsBool(PREVIOUS_BOOTSTRAP_PREF, false) &&
-            hasUsableLocalFiles(context)
-        ) {
+        if (MmkvManager.decodeSettingsBool(PREVIOUS_BOOTSTRAP_PREF, false) && hasUsableLocalFiles(context)) {
             MmkvManager.encodeSettings(AppConfig.PREF_GEO_BOOTSTRAP_COMPLETE, true)
             return false
         }
-
-        enqueue(context, force = false, reconnectAfterUpdate = false)
+        enqueue(context, false, false)
         return true
     }
 
@@ -72,219 +61,145 @@ object GeoAssetUpdater {
         val now = System.currentTimeMillis()
         if (now - lastForcedUpdateAt < FORCE_COOLDOWN_MS) return
         lastForcedUpdateAt = now
-        enqueue(context, force = true, reconnectAfterUpdate = reconnectAfterUpdate)
+        enqueue(context, true, reconnectAfterUpdate)
     }
 
     fun isGeoDataError(message: String?): Boolean {
         val value = message.orEmpty().lowercase()
-        return value.contains("common/geodata") ||
-            value.contains("geosite.dat") ||
-            value.contains("geoip.dat") ||
-            value.contains("failed to load geosite") ||
-            value.contains("failed to load geoip") ||
-            value.contains("illegal domain rule: geosite:") ||
+        return value.contains("common/geodata") || value.contains("geosite.dat") ||
+            value.contains("geoip.dat") || value.contains("failed to load geosite") ||
+            value.contains("failed to load geoip") || value.contains("illegal domain rule: geosite:") ||
             value.contains("code not found in geosite")
     }
 
-    private fun enqueue(context: Context, force: Boolean, reconnectAfterUpdate: Boolean) {
-        val remoteWorkManager = RemoteWorkManager.getInstance(context.applicationContext)
-        remoteWorkManager.cancelUniqueWork("roscom_geo_bootstrap")
-        remoteWorkManager.cancelUniqueWork("zetya_geo_bootstrap_v2")
-        remoteWorkManager.cancelUniqueWork("zima_geo_bootstrap_v3")
-        remoteWorkManager.cancelUniqueWork("zima_geo_bootstrap_v4")
+    private fun connectedConstraint() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
-        val request = OneTimeWorkRequestBuilder<UpdateTask>()
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
-            )
+    private fun enqueue(context: Context, force: Boolean, reconnect: Boolean) {
+        val request = OneTimeWorkRequestBuilder<UpdateTask>().setConstraints(connectedConstraint())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-            .setInputData(
-                workDataOf(
-                    INPUT_FORCE to force,
-                    INPUT_RECONNECT to reconnectAfterUpdate
-                )
-            )
-            .addTag(AppConfig.GEO_BOOTSTRAP_TASK_NAME)
-            .addTag(if (force) VISIBLE_PROGRESS_TAG else "geo_update_silent")
-            .build()
-
-        remoteWorkManager.enqueueUniqueWork(
-            AppConfig.GEO_BOOTSTRAP_TASK_NAME,
-            if (force) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
-            request
+            .setInputData(workDataOf(INPUT_FORCE to force, INPUT_RECONNECT to reconnect))
+            .addTag(if (force) VISIBLE_PROGRESS_TAG else "geo_update_silent").build()
+        RemoteWorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+            if (force) AppConfig.GEO_MANUAL_TASK_NAME else AppConfig.GEO_BOOTSTRAP_TASK_NAME,
+            if (force) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP, request
         )
     }
 
     fun hasUsableLocalFiles(context: Context): Boolean {
-        val assetDir = File(Utils.userAssetPath(context))
-        return remoteAssets.all { asset ->
-            File(assetDir, asset.name).let { it.isFile && it.length() > 0L }
-        }
+        val dir = File(Utils.userAssetPath(context))
+        return remoteAssets.all { File(dir, it.name).let { f -> f.isFile && f.length() > 0 } }
     }
 
     class UpdateTask(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
         override suspend fun doWork(): Result {
-            val force = inputData.getBoolean(INPUT_FORCE, false)
-            val reconnectAfterUpdate = inputData.getBoolean(INPUT_RECONNECT, false)
-            if (!force && MmkvManager.decodeSettingsBool(AppConfig.PREF_GEO_BOOTSTRAP_COMPLETE, false)) {
-                return Result.success(workDataOf(INPUT_RECONNECT to reconnectAfterUpdate))
-            }
-
-            setProgress(workDataOf(PROGRESS_PERCENT to 0))
-
-            // Bundled databases keep the first launch functional while the download waits for network.
+            val reconnect = inputData.getBoolean(INPUT_RECONNECT, false)
+            report(0, applicationContext.getString(R.string.geo_update_checking), true)
             SettingsManager.initAssets(applicationContext, applicationContext.assets)
-            val assetDir = File(Utils.userAssetPath(applicationContext))
-            if (!assetDir.exists() && !assetDir.mkdirs()) return retryLater()
+            val dir = File(Utils.userAssetPath(applicationContext))
+            if (!dir.exists() && !dir.mkdirs()) return retryNotice()
+            val downloads = remoteAssets.map { it to File(dir, ".${it.name}.download") }
+            val expected = try { remoteAssets.associateWith(::fetchChecksum) }
+            catch (e: Exception) { LogUtil.e(AppConfig.TAG, "Geo checksum check failed", e); return retryNotice() }
+            var changed = false
 
-            val downloads = remoteAssets.map { asset ->
-                asset to File(assetDir, ".${asset.name}.${id}.download")
-            }
-            var downloaded = true
             for ((index, pair) in downloads.withIndex()) {
-                if (!downloaded) break
-                val (asset, temp) = pair
-                val progressSpan = 90 / downloads.size
-                val baseProgress = index * progressSpan
-                downloaded = try {
-                    downloadAndVerify(asset, temp, baseProgress, progressSpan)
-                } catch (e: Exception) {
-                    LogUtil.e(AppConfig.TAG, "First-install geo download failed: ${asset.name}", e)
-                    false
-                }
-                if (downloaded) {
-                    setProgress(workDataOf(PROGRESS_PERCENT to ((index + 1) * progressSpan)))
-                }
+                val (asset, partial) = pair
+                val target = File(dir, asset.name)
+                val checksum = expected.getValue(asset)
+                val span = 90 / downloads.size
+                if (checksum != null && target.isFile && sha256(target) == checksum) { partial.delete(); continue }
+                val ok = try { download(asset, partial, checksum, index * span, span) }
+                catch (e: Exception) { LogUtil.e(AppConfig.TAG, "Geo download failed: ${asset.name}", e); false }
+                if (!ok) return retryNotice()
+                if (!target.isFile || sha256(target) != sha256(partial)) changed = true
             }
-
-            if (!downloaded) {
+            if (!changed) {
                 downloads.forEach { it.second.delete() }
-                return retryLater()
+                report(100, applicationContext.getString(R.string.geo_update_up_to_date))
+                notifyFinal(R.string.geo_update_up_to_date)
+                return Result.success()
             }
-            if (!installTogether(assetDir, downloads)) {
-                downloads.forEach { it.second.delete() }
-                return retryLater()
-            }
-
-            setProgress(workDataOf(PROGRESS_PERCENT to 100))
+            if (!installTogether(dir, downloads.filter { it.second.isFile })) return retryNotice()
+            report(100, applicationContext.getString(R.string.geo_update_ready))
             MmkvManager.encodeSettings(AppConfig.PREF_GEO_BOOTSTRAP_COMPLETE, true)
-            LogUtil.i(AppConfig.TAG, "Checksum-verified GeoSite/GeoIP pair installed")
             try {
                 withContext(Dispatchers.Main.immediate) {
-                    if (reconnectAfterUpdate) {
-                        if (CoreServiceManager.isRunning()) {
-                            CoreServiceManager.reloadVService(applicationContext)
-                        } else {
-                            CoreServiceManager.startVService(applicationContext)
-                        }
-                    } else if (CoreServiceManager.isRunning()) {
-                        CoreServiceManager.reloadVService(applicationContext)
-                    }
+                    if (reconnect) {
+                        if (CoreServiceManager.isRunning()) CoreServiceManager.reloadVService(applicationContext)
+                        else CoreServiceManager.startVService(applicationContext)
+                    } else if (CoreServiceManager.isRunning()) CoreServiceManager.reloadVService(applicationContext)
                 }
-            } catch (e: Exception) {
-                // The databases are already installed. A denied service start must not turn
-                // a successful, checksum-verified update into a failed WorkManager task.
-                LogUtil.e(AppConfig.TAG, "Geo files installed, but VPN reconnect failed", e)
-            }
-            return Result.success(workDataOf(INPUT_RECONNECT to reconnectAfterUpdate))
+            } catch (e: Exception) { LogUtil.e(AppConfig.TAG, "Geo files installed, VPN reload failed", e) }
+            notifyFinal(R.string.geo_update_ready)
+            return Result.success()
         }
 
-        private suspend fun downloadAndVerify(
-            asset: RemoteAsset,
-            temp: File,
-            baseProgress: Int,
-            progressSpan: Int
-        ): Boolean = coroutineScope {
-            val latestProgress = AtomicInteger(baseProgress)
+        private suspend fun download(asset: RemoteAsset, partial: File, checksum: String?, base: Int, span: Int) = coroutineScope {
+            val latest = AtomicInteger(base)
             val reporter = launch {
-                var reportedProgress = -1
+                var previous = -1
                 while (isActive) {
-                    val progress = latestProgress.get().coerceIn(0, 90)
-                    if (progress != reportedProgress) {
-                        setProgress(workDataOf(PROGRESS_PERCENT to progress))
-                        reportedProgress = progress
-                    }
-                    delay(250L)
+                    val value = latest.get().coerceIn(0, 90)
+                    if (value != previous) { report(value, applicationContext.getString(R.string.geo_update_downloading, value)); previous = value }
+                    delay(500)
                 }
             }
-
             try {
                 withContext(Dispatchers.IO) {
-                    val downloadedOk = HttpUtil.downloadToFile(
-                        UrlContentRequest(url = asset.url, timeout = 20_000),
-                        temp
-                    ) { downloadedBytes, totalBytes ->
-                        if (totalBytes > 0L) {
-                            latestProgress.set(
-                                baseProgress + (downloadedBytes * progressSpan / totalBytes).toInt()
-                            )
-                        }
-                    } && temp.length() > 0L
-                    downloadedOk && verifyChecksum(asset, temp)
+                    val ok = HttpUtil.downloadToFile(UrlContentRequest(asset.url, timeout = 60_000), partial, resume = true) { done, total ->
+                        if (total > 0) latest.set(base + (done * span / total).toInt())
+                    }
+                    ok && partial.length() > 1024 && (checksum == null || sha256(partial) == checksum)
                 }
-            } finally {
-                reporter.cancelAndJoin()
-                setProgress(
-                    workDataOf(PROGRESS_PERCENT to latestProgress.get().coerceIn(0, 90))
-                )
-            }
+            } finally { reporter.cancelAndJoin() }
         }
 
-        private fun verifyChecksum(asset: RemoteAsset, file: File): Boolean {
-            val expected = asset.checksum.lowercase()
-            if (!expected.matches(Regex("[0-9a-f]{64}"))) return false
+        private fun fetchChecksum(asset: RemoteAsset): String? {
+            val url = asset.checksumUrl ?: return null
+            val body = HttpUtil.getUrlContent(UrlContentRequest(url, timeout = 20_000)).orEmpty()
+            return Regex("(?i)\\b[0-9a-f]{64}\\b").find(body)?.value?.lowercase()
+                ?: error("Invalid checksum for ${asset.name}")
+        }
 
+        private fun sha256(file: File): String {
             val digest = MessageDigest.getInstance("SHA-256")
             file.inputStream().use { input ->
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read <= 0) break
-                    digest.update(buffer, 0, read)
-                }
+                while (true) { val count = input.read(buffer); if (count <= 0) break; digest.update(buffer, 0, count) }
             }
-            val actual = digest.digest().joinToString("") { "%02x".format(it) }
-            if (actual != expected) {
-                LogUtil.e(AppConfig.TAG, "Checksum mismatch for ${asset.name}")
-            }
-            return actual == expected
+            return digest.digest().joinToString("") { "%02x".format(it) }
         }
 
-        private fun retryLater(): Result = Result.retry()
+        private suspend fun report(value: Int, text: String, indeterminate: Boolean = false) {
+            setProgress(workDataOf(PROGRESS_PERCENT to value))
+            setForeground(NotificationHelper.progressForegroundInfo(
+                NotificationChannelType.GEO_UPDATE, applicationContext,
+                applicationContext.getString(R.string.geo_update_notification_title), text, value, indeterminate
+            ))
+        }
 
-        private fun installTogether(
-            assetDir: File,
-            downloads: List<Pair<RemoteAsset, File>>
-        ): Boolean {
-            val targets = downloads.map { (asset, temp) ->
-                Triple(temp, File(assetDir, asset.name), File(assetDir, ".${asset.name}.previous"))
-            }
+        private fun notifyFinal(message: Int) = NotificationHelper.notify(
+            NotificationChannelType.GEO_UPDATE, applicationContext,
+            applicationContext.getString(R.string.geo_update_notification_title), applicationContext.getString(message)
+        )
+        private fun retryNotice(): Result { notifyFinal(R.string.geo_update_failed); return Result.retry() }
 
-            targets.forEach { (_, _, backup) -> backup.delete() }
+        private fun installTogether(dir: File, downloads: List<Pair<RemoteAsset, File>>): Boolean {
+            val targets = downloads.map { (asset, temp) -> Triple(temp, File(dir, asset.name), File(dir, ".${asset.name}.previous")) }
+            targets.forEach { it.third.delete() }
             val backedUp = mutableListOf<Triple<File, File, File>>()
             for (entry in targets) {
-                val (_, target, backup) = entry
-                if (target.exists() && !target.renameTo(backup)) {
-                    backedUp.forEach { (_, oldTarget, oldBackup) -> oldBackup.renameTo(oldTarget) }
-                    return false
-                }
+                if (entry.second.exists() && !entry.second.renameTo(entry.third)) { backedUp.forEach { it.third.renameTo(it.second) }; return false }
                 backedUp.add(entry)
             }
-
             val installed = mutableListOf<Triple<File, File, File>>()
             for (entry in targets) {
-                val (temp, target, _) = entry
-                if (!temp.renameTo(target)) {
-                    installed.forEach { (_, newTarget, _) -> newTarget.delete() }
-                    backedUp.forEach { (_, oldTarget, oldBackup) -> oldBackup.renameTo(oldTarget) }
-                    return false
+                if (!entry.first.renameTo(entry.second)) {
+                    installed.forEach { it.second.delete() }; backedUp.forEach { it.third.renameTo(it.second) }; return false
                 }
                 installed.add(entry)
             }
-
-            backedUp.forEach { (_, _, backup) -> backup.delete() }
+            backedUp.forEach { it.third.delete() }
             return true
         }
     }

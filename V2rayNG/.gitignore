@@ -9,3 +9,6 @@
 !app/libs/
 !app/libs/*.aar
 !app/libs/**/*.so
+
+# Artifacts downloaded by tools/remote-release.ps1
+remote-release/

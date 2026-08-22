@@ -13,8 +13,6 @@
     "lknpd.nalog.ru": "213.24.64.181"
   },
   "DirectSites": [
-    "keyword:mtalk.google.com",
-    "domain:mtalk.google.com",
     "geosite:private",
     "geosite:category-ru",
     "geosite:whitelist",
@@ -30,7 +28,8 @@
   ],
   "DirectIp": [
     "geoip:private",
-    "geoip:direct"
+    "geoip:direct",
+    "geoip:ru"
   ],
   "ProxySites": [
     "domain:play.google.com",

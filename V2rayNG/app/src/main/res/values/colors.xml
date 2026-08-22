@@ -4,8 +4,8 @@
     <color name="colorPingRed">#C43D4F</color>
     <color name="colorConfigType">#A96900</color>
     <color name="colorWhite">#FFFFFF</color>
-    <color name="color_fab_active">#008A68</color>
-    <color name="color_fab_inactive">#3D5CE1</color>
+    <color name="color_fab_active">#FFB300</color>
+    <color name="color_fab_inactive">#FF8F00</color>
     <color name="divider_color_light">#DDE1F0</color>
     <color name="colorIndicator">@color/md_theme_primary</color>
     <color name="zeus_card_stroke">#C8D0F5</color>
@@ -13,11 +13,11 @@
     <color name="zeus_status_background">#28FFFFFF</color>
     <color name="zeus_button_ripple">#66FFFFFF</color>
 
-    <!-- ЗимаVPN: electric indigo, lightning gold, calm emerald. -->
-    <color name="md_theme_primary">#2948C7</color>
-    <color name="md_theme_onPrimary">#FFFFFF</color>
-    <color name="md_theme_primaryContainer">#E1E6FF</color>
-    <color name="md_theme_onPrimaryContainer">#0C1A59</color>
+    <!-- Lampa / Хоттабыч: warm amber and deep night. -->
+    <color name="md_theme_primary">#FF8F00</color>
+    <color name="md_theme_onPrimary">#1A0F08</color>
+    <color name="md_theme_primaryContainer">#FFE0B2</color>
+    <color name="md_theme_onPrimaryContainer">#3E2723</color>
 
     <!-- Secondary colors - accent color: orange -->
     <color name="md_theme_secondary">#A96900</color>

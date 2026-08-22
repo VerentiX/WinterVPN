@@ -38,6 +38,9 @@
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"
         android:minSdkVersion="34" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+        android:minSdkVersion="34" />
     <!-- <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -185,6 +188,8 @@
                 <data android:scheme="v2rayng" />
                 <data android:host="install-config" />
                 <data android:host="install-sub" />
+                <data android:host="payment-success" />
+                <data android:host="payment-fail" />
             </intent-filter>
         </activity>
         <activity
@@ -201,6 +206,11 @@
             android:screenOrientation="portrait" />
         <activity
             android:name=".ui.AboutActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".ui.RenewSubscriptionActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
 
@@ -345,6 +355,7 @@
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:exported="false"
+            android:foregroundServiceType="dataSync"
             android:process=":bg"
             tools:node="merge" />
 

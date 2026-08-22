@@ -12,6 +12,9 @@ interface ServiceControl {
     /** True while the service owns, starts, or reloads its networking stack. */
     fun isServiceActive(): Boolean
 
+    /** True when TUN/hev (or equivalent) are up and a soft reload can run. */
+    fun isDataplaneReady(): Boolean
+
     /**
      * Starts the service.
      */
@@ -39,8 +42,15 @@ interface ServiceControl {
     fun vpnProtect(socket: Int): Boolean
 
     /**
-     * Rebuilds the Android VPN interface so a new TUN MTU takes effect.
+     * Rebuilds the Android VPN interface so a new TUN MTU takes effect,
+     * or restarts hev when the SOCKS inbound port changes.
      * No-op for non-VPN service modes.
      */
     fun requestTunRecreate()
+
+    /**
+     * Drop TUN-side TCP (Telegram MTProto) after a Wi-Fi↔LTE source-address
+     * change without waiting for Smart Priority probes. TUN itself stays up.
+     */
+    fun resetDataplaneForTransport()
 }

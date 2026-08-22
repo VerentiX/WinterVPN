@@ -33,6 +33,7 @@ import com.v2ray.ang.service.CoreRootService
 import com.v2ray.ang.service.CoreVpnService
 import com.v2ray.ang.service.DialerNativeService
 import com.v2ray.ang.service.IDialerService
+import com.v2ray.ang.util.DebugDiagnostics
 import com.v2ray.ang.util.FailureLogRecorder
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.MessageUtil
@@ -148,12 +149,23 @@ object CoreServiceManager {
 
     /** Publishes the authoritative daemon state to every registered UI client. */
     fun notifyUiCurrentServiceState(context: Context) {
-        val active = serviceControl?.isServiceActive() == true || coreController.isRunning
+        val control = serviceControl
+        val ready = control?.isDataplaneReady() == true
+        val connecting = control?.isServiceActive() == true && !ready
+        if (connecting) {
+            // STARTING without TUN/hev must not fill the power button.
+            return
+        }
         MessageUtil.sendMsg2UI(
             context.applicationContext,
-            if (active) AppConfig.MSG_STATE_RUNNING else AppConfig.MSG_STATE_NOT_RUNNING,
+            if (ready) AppConfig.MSG_STATE_RUNNING else AppConfig.MSG_STATE_NOT_RUNNING,
             "",
         )
+    }
+
+    /** FAB/shade "connected" only after TUN+hev (or proxy/root equivalent) are up. */
+    fun notifyDataplaneStarted(service: Service) {
+        MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
     }
 
     private fun notifyStartFailure(context: Context, message: String) {
@@ -186,6 +198,15 @@ object CoreServiceManager {
     /** Rebuilds the VPN TUN so a new adaptive MTU takes effect. */
     fun requestTunRecreate() {
         serviceControl?.requestTunRecreate()
+    }
+
+    /**
+     * Keep TUN/hev up after an uplink change. Clash/sing-box close proxy
+     * sessions in-process; v2rayNG only rebinds. Restarting hev here is what
+     * made Telegram show «ожидание сети».
+     */
+    fun resetDataplaneForTransport() {
+        serviceControl?.resetDataplaneForTransport()
     }
 
     /** Applies a runtime route change even though the selected profile GUID is unchanged. */
@@ -242,6 +263,13 @@ object CoreServiceManager {
     /** Roscom routing profile currently applied by Smart Priority (`default` / `whitelist`). */
     fun getActiveRoutingModeLabel(): String = activeRoutingModeLabel
 
+    /** p0–p4 → FULL, p5+ → WHITELIST. Null before Smart Priority has a route. */
+    internal fun getActiveRoutingMode(): RoscomPriorityRouting.Mode? = when (activeRoutingModeLabel) {
+        "whitelist" -> RoscomPriorityRouting.Mode.WHITELIST
+        "default" -> RoscomPriorityRouting.Mode.FULL
+        else -> null
+    }
+
     /**
      * Smart Priority is the source of truth for the selected route. Native access
      * logs are not guaranteed to be delivered through CoreCallbackHandler, so the
@@ -278,6 +306,9 @@ object CoreServiceManager {
         return coreController.isRunning && currentConfigGuid == MmkvManager.getSelectServer()
     }
 
+    /** TUN/hev (VPN) or equivalent dataplane is up; Smart Priority may reload. */
+    fun isDataplaneReady(): Boolean = serviceControl?.isDataplaneReady() == true
+
     /**
      * Starts the context service for V2Ray.
      * Chooses between VPN service or Proxy-only service based on user settings.
@@ -289,6 +320,22 @@ object CoreServiceManager {
     @Throws(Exception::class)
     private fun startContextService(context: Context) {
         if (coreController.isRunning) {
+            if (SettingsManager.isVpnMode() && !SettingsManager.isRootMode()) {
+                // Stop may still be tearing Xray down. Deliver the intent so
+                // CoreVpnService can start again once STOPPED, instead of dropping
+                // a Start tap that arrived during STOPPING.
+                LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core still running; delivering start for VPN queue")
+                try {
+                    ContextCompat.startForegroundService(
+                        context.applicationContext,
+                        Intent(context.applicationContext, CoreVpnService::class.java),
+                    )
+                } catch (e: Exception) {
+                    LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to deliver queued start", e)
+                    notifyUiCurrentServiceState(context)
+                }
+                return
+            }
             LogUtil.w(AppConfig.TAG, "StartCore-Manager: Core already running")
             notifyUiCurrentServiceState(context)
             return
@@ -363,11 +410,17 @@ object CoreServiceManager {
      * `registerReceiver(Context, BroadcastReceiver, IntentFilter, int)`.
      * Starts the V2Ray core service.
      */
-    fun startCoreLoop(vpnInterface: ParcelFileDescriptor?): Boolean {
-        return coreLifecycleLock.withLock { startCoreLoopLocked(vpnInterface) }
+    fun startCoreLoop(
+        vpnInterface: ParcelFileDescriptor?,
+        notifyUi: Boolean = true,
+    ): Boolean {
+        return coreLifecycleLock.withLock { startCoreLoopLocked(vpnInterface, notifyUi) }
     }
 
-    private fun startCoreLoopLocked(vpnInterface: ParcelFileDescriptor?): Boolean {
+    private fun startCoreLoopLocked(
+        vpnInterface: ParcelFileDescriptor?,
+        notifyUi: Boolean = true,
+    ): Boolean {
         if (coreController.isRunning) {
             LogUtil.w(AppConfig.TAG, "StartCore-Manager: Core already running")
             return false
@@ -380,7 +433,7 @@ object CoreServiceManager {
         }
 
         return try {
-            doStartCoreLoop(service, vpnInterface, prepareCoreStart(service))
+            doStartCoreLoop(service, vpnInterface, prepareCoreStart(service), notifyUi)
             suppressShutdownStop = false
             SubscriptionRefreshManager.startVpnBackgroundRefresh()
             true
@@ -403,7 +456,20 @@ object CoreServiceManager {
             error(result.errorMessage.ifBlank { "Failed to get V2Ray config" })
         }
         val runtimeContent = PriorityFailoverManager.prepareRuntimeConfig(guid, result.content)
+        dumpRuntimeConfig(service, runtimeContent)
         return PreparedCoreStart(guid, config, runtimeContent)
+    }
+
+    /** Persist the exact JSON passed to Xray so it can be pulled via adb. */
+    private fun dumpRuntimeConfig(context: Context, runtimeContent: String) {
+        runCatching {
+            val dir = context.getExternalFilesDir(null) ?: context.filesDir
+            val file = java.io.File(dir, "runtime_xray_config.json")
+            file.writeText(runtimeContent)
+            LogUtil.i(AppConfig.TAG, "Runtime Xray config dumped: ${file.absolutePath} (${runtimeContent.length} bytes)")
+        }.onFailure { e ->
+            LogUtil.w(AppConfig.TAG, "Failed to dump runtime Xray config: ${e.message}")
+        }
     }
 
     @Throws(Exception::class)
@@ -411,6 +477,7 @@ object CoreServiceManager {
         service: Service,
         vpnInterface: ParcelFileDescriptor?,
         prepared: PreparedCoreStart,
+        notifyUi: Boolean = true,
     ) {
         val guid = prepared.guid
         val config = prepared.profile
@@ -455,7 +522,9 @@ object CoreServiceManager {
             browserDialer!!.start(service, dialerAddr)
         }
 
-        MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
+        if (notifyUi) {
+            MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
+        }
         PriorityFailoverManager.onCoreStarted(service)
         // Rebuild foreground notification after the active route label is known.
         NotificationManager.showNotification(currentConfig)
@@ -480,8 +549,23 @@ object CoreServiceManager {
      * Unregisters broadcast receivers, stops notifications, and shuts down plugins.
      * @return True if the core was stopped successfully, false otherwise.
      */
-    fun stopCoreLoop(preservePriorityState: Boolean = false): Boolean {
-        return coreLifecycleLock.withLock {
+    fun stopCoreLoop(
+        preservePriorityState: Boolean = false,
+        waitForLockMs: Long = STOP_LOOP_TIMEOUT_MS,
+    ): Boolean {
+        val acquired = try {
+            coreLifecycleLock.tryLock(waitForLockMs, TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {
+            false
+        }
+        if (!acquired) {
+            LogUtil.w(
+                AppConfig.TAG,
+                "StartCore-Manager: stopCoreLoop could not acquire lock in ${waitForLockMs}ms",
+            )
+            return false
+        }
+        return try {
             stopCoreLoopLocked(
                 // A preserved priority state means this is an internal core recycle
                 // (Wi-Fi/LTE handover or failed soft-reload recovery), not a user stop.
@@ -490,6 +574,10 @@ object CoreServiceManager {
                 notifyUi = !preservePriorityState,
                 clearPriorityState = !preservePriorityState,
             )
+        } finally {
+            if (coreLifecycleLock.isHeldByCurrentThread) {
+                coreLifecycleLock.unlock()
+            }
         }
     }
 
@@ -684,12 +772,15 @@ object CoreServiceManager {
      * do not include burstObservatory health probes.
      */
     fun observeAccessLog(accessLog: String) {
-        val routeTag = Regex("""\[(?:auto-proxy-in|chain-in-s\d+) -> (route-p[^\]]+)]""")
-            .find(accessLog)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?: return
-        // Real TUN traffic confirms the outbound in use after a priority reload.
+        val match = Regex(
+            """\[(auto-proxy-in|auto-proxy-whitelist-in|chain-in-s\d+) -> (route-p[^\]]+)]""",
+        ).find(accessLog) ?: return
+        val inbound = match.groupValues[1]
+        val routeTag = match.groupValues[2]
+        val mode = getActiveRoutingMode()
+        // Stale P0 sessions on auto-proxy-in must not overwrite a p5+ dataplane.
+        if (mode == RoscomPriorityRouting.Mode.WHITELIST && inbound == "auto-proxy-in") return
+        if (mode == RoscomPriorityRouting.Mode.FULL && inbound == "auto-proxy-whitelist-in") return
         runCatching { setActiveOutboundTag(routeTag) }
             .onFailure { LogUtil.e(AppConfig.TAG, "StartCore-Manager: observeAccessLog failed", it) }
     }
@@ -839,20 +930,16 @@ object CoreServiceManager {
          * @return 0 for success, any other value for failure.
          */
         override fun shutdown(): Long {
-            if (suppressShutdownStop) {
-                return 0
-            }
-            FailureLogRecorder.breadcrumb("CORE_CALLBACK_SHUTDOWN", forceDisk = true)
-            val control = serviceControl ?: return -1
-            return try {
-                // Native callbacks must not tear down on the calling thread if it can
-                // be the main looper; stop is always dispatched to IO.
-                serviceActionScope.launch { control.stopService() }
-                0
-            } catch (e: Exception) {
-                LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop service", e)
-                -1
-            }
+            // Xray emits this when a loop is replaced or finishes init. Tearing
+            // down VpnService here started a Start→Stop loop: TUN died ~60ms
+            // after hev attached, Telegram/internet went with it.
+            if (suppressShutdownStop) return 0
+            LogUtil.w(
+                AppConfig.TAG,
+                "StartCore-Manager: Core shutdown callback ignored " +
+                    "(running=${coreController.isRunning}); VPN service keeps TUN",
+            )
+            return 0
         }
 
         /**
@@ -898,7 +985,7 @@ object CoreServiceManager {
                     InetSocketAddress(srcIP, srcPort.toInt()),
                     InetSocketAddress(destIP, destPort.toInt())
                 ).toLong()
-                if (uid >= 0 && MmkvManager.decodeSettingsBool(AppConfig.PREF_CONNECTION_DIAGNOSTICS_ENABLED) == true) {
+                if (uid >= 0 && DebugDiagnostics.isConnectionDiagnosticsEnabled()) {
                     val packages = context.packageManager.getPackagesForUid(uid.toInt())
                     val packageName = packages?.firstOrNull().orEmpty()
                     val label = runCatching {
@@ -933,7 +1020,7 @@ object CoreServiceManager {
             val control = serviceControl ?: return
             when (intent?.getIntExtra("key", 0)) {
                 AppConfig.MSG_REGISTER_CLIENT -> {
-                    if (control.isServiceActive()) {
+                    if (control.isDataplaneReady()) {
                         MessageUtil.sendMsg2UI(control.getService(), AppConfig.MSG_STATE_RUNNING, "")
                     } else {
                         MessageUtil.sendMsg2UI(control.getService(), AppConfig.MSG_STATE_NOT_RUNNING, "")
@@ -949,7 +1036,7 @@ object CoreServiceManager {
                 }
 
                 AppConfig.MSG_STATE_STOP -> {
-                    LogUtil.i(AppConfig.TAG, "StartCore-Manager: Stop service")
+                    LogUtil.transport("Stop requested by UI")
                     // BroadcastReceiver runs on the main thread; never call stopLoop here.
                     serviceActionScope.launch {
                         control.stopService()

@@ -5,6 +5,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.dto.CheckUpdateResult
 import com.v2ray.ang.dto.GitHubRelease
+import com.v2ray.ang.dto.LampaAppRelease
 import com.v2ray.ang.dto.UrlContentRequest
 import com.v2ray.ang.extension.concatUrl
 import com.v2ray.ang.util.HttpUtil
@@ -20,6 +21,13 @@ object UpdateCheckerManager {
     }
 
     suspend fun checkForUpdate(includePreRelease: Boolean = false): CheckUpdateResult = withContext(Dispatchers.IO) {
+        if (!includePreRelease) {
+            runCatching { checkHattabychRelease() }
+                .onFailure { LogUtil.w(AppConfig.TAG, "Hattabych update API unavailable, using GitHub: ${it.message}") }
+                .getOrNull()
+                ?.let { return@withContext it }
+        }
+
         val url = if (includePreRelease) {
             AppConfig.APP_API_URL
         } else {
@@ -82,6 +90,54 @@ object UpdateCheckerManager {
         } else {
             CheckUpdateResult(hasUpdate = false)
         }
+    }
+
+    private fun checkHattabychRelease(): CheckUpdateResult {
+        val headers = mapOf(
+            "Accept" to "application/json",
+            "User-Agent" to "${AppConfig.LAMPA_SUBSCRIPTION_USER_AGENT}/${BuildConfig.VERSION_NAME}"
+        )
+        val proxyUsername = SettingsManager.getSocksUsername()
+        val proxyPassword = SettingsManager.getSocksPassword()
+        val request = { httpPort: Int ->
+            HttpUtil.getUrlContent(
+                UrlContentRequest(
+                    url = AppConfig.LAMPA_APP_UPDATE_API_URL,
+                    timeout = 5000,
+                    httpPort = httpPort,
+                    proxyUsername = if (httpPort > 0) proxyUsername else null,
+                    proxyPassword = if (httpPort > 0) proxyPassword else null,
+                    headers = headers
+                )
+            )
+        }
+        val response = request(SettingsManager.getHttpPort()) ?: request(0)
+            ?: throw IllegalStateException("Failed to get Hattabych release")
+        val release = JsonUtil.fromJsonSafe(response, LampaAppRelease::class.java)
+            ?.takeIf { it.ok && it.tag.isNotBlank() }
+            ?: throw IllegalStateException("Invalid Hattabych release response")
+
+        val latestVersion = release.tag.removePrefix("v")
+        if (compareVersions(latestVersion, BuildConfig.VERSION_NAME) <= 0) {
+            return CheckUpdateResult(hasUpdate = false)
+        }
+        val asset = pickHattabychAsset(release, Build.SUPPORTED_ABIS[0])
+        val rawUrl = asset?.url?.takeIf { it.isNotBlank() } ?: release.downloadUrl
+        if (rawUrl.isBlank()) throw IllegalStateException("No compatible APK found")
+        val downloadUrl = if (rawUrl.startsWith("/")) AppConfig.LAMPA_SITE_URL + rawUrl else rawUrl
+        return CheckUpdateResult(
+            hasUpdate = true,
+            latestVersion = latestVersion,
+            releaseNotes = release.name,
+            downloadUrl = downloadUrl,
+            isPreRelease = false
+        )
+    }
+
+    private fun pickHattabychAsset(release: LampaAppRelease, abi: String): LampaAppRelease.Asset? {
+        return release.assets.firstOrNull { it.arch.equals(abi, ignoreCase = true) }
+            ?: release.assets.firstOrNull { it.arch.equals("universal", ignoreCase = true) }
+            ?: release.apk
     }
 
     private fun compareVersions(version1: String, version2: String): Int {

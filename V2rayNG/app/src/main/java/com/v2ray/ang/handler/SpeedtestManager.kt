@@ -13,6 +13,13 @@ import java.net.UnknownHostException
 
 object SpeedtestManager {
 
+    /** True when the local Xray HTTP inbound accepts connections (VPN process is up). */
+    fun isLocalHttpInboundAvailable(): Boolean {
+        val httpPort = SettingsManager.getHttpPort()
+        if (httpPort == 0) return false
+        return socketConnectTime(AppConfig.LOOPBACK, httpPort, timeoutMs = 400) >= 0
+    }
+
     /**
      * Measures the time taken to establish a TCP connection to a given URL and port.
      *

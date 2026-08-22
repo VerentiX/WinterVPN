@@ -7,6 +7,7 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import androidx.lifecycle.lifecycleScope
+import com.v2ray.ang.AppFeatures
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreConfigManager
 import com.v2ray.ang.databinding.ActivityConfigViewerBinding
@@ -22,6 +23,10 @@ class ConfigViewerActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!AppFeatures.allowConfigView()) {
+            finish()
+            return
+        }
         setContentViewWithToolbar(
             binding.root,
             showHomeAsUp = true,

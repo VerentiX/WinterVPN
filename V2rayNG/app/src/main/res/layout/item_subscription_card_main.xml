@@ -112,57 +112,102 @@
             android:layout_marginEnd="14dp"
             android:layout_marginBottom="12dp"
             android:background="@drawable/bg_subscription_stats"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
+            android:orientation="vertical"
             android:padding="8dp"
             android:visibility="gone">
 
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:contentDescription="@null"
-                android:src="@drawable/ic_subscription_info"
-                app:tint="#9EC4FF" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <FrameLayout
-                android:id="@+id/traffic_container"
-                android:layout_width="0dp"
-                android:layout_height="26dp"
-                android:layout_marginStart="9dp"
-                android:layout_weight="1">
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_subscription_info"
+                    app:tint="#9EC4FF" />
 
-                <ProgressBar
-                    android:id="@+id/subscription_traffic_progress"
-                    style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:max="10000"
-                    android:progressDrawable="@drawable/progress_subscription_traffic" />
+                <FrameLayout
+                    android:id="@+id/traffic_container"
+                    android:layout_width="0dp"
+                    android:layout_height="26dp"
+                    android:layout_marginStart="9dp"
+                    android:layout_weight="1">
+
+                    <ProgressBar
+                        android:id="@+id/subscription_traffic_progress"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:max="10000"
+                        android:progressDrawable="@drawable/progress_subscription_traffic" />
+
+                    <TextView
+                        android:id="@+id/subscription_traffic_text"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:ellipsize="end"
+                        android:fontFamily="sans-serif-medium"
+                        android:gravity="center"
+                        android:maxLines="1"
+                        android:paddingStart="5dp"
+                        android:paddingEnd="5dp"
+                        android:textColor="#F2FFFFFF"
+                        android:textSize="11sp" />
+                </FrameLayout>
 
                 <TextView
-                    android:id="@+id/subscription_traffic_text"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:id="@+id/subscription_expiry"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
                     android:ellipsize="end"
-                    android:fontFamily="sans-serif-medium"
-                    android:gravity="center"
-                    android:maxLines="1"
-                    android:paddingStart="5dp"
-                    android:paddingEnd="5dp"
-                    android:textColor="#F2FFFFFF"
+                    android:gravity="end"
+                    android:maxLines="2"
+                    android:textColor="#E0FFFFFF"
                     android:textSize="11sp" />
-            </FrameLayout>
+            </LinearLayout>
 
             <TextView
-                android:id="@+id/subscription_expiry"
-                android:layout_width="wrap_content"
+                android:id="@+id/packages_header"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:ellipsize="end"
-                android:gravity="end"
-                android:maxLines="2"
-                android:textColor="#E0FFFFFF"
-                android:textSize="11sp" />
+                android:layout_marginTop="10dp"
+                android:fontFamily="sans-serif-medium"
+                android:text="@string/subscription_packages_header"
+                android:textColor="#B8FFFFFF"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/package_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/subscription_until"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textColor="#80FFFFFF"
+                android:textSize="11sp"
+                android:visibility="gone" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/subscription_renew"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:minHeight="40dp"
+                android:text="@string/subscription_renew"
+                android:textColor="#FFD180"
+                android:visibility="gone"
+                app:rippleColor="#33FFB74D" />
         </LinearLayout>
 
         <LinearLayout

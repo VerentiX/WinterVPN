@@ -20,10 +20,49 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <CheckBox
+                android:id="@+id/check_mode_bypass"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:text="@string/split_tunnel_mode_bypass"
+                android:textAppearance="@style/TextAppearance.AppCompat.Subhead" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="32dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="8dp"
+                android:text="@string/split_tunnel_hint_bypass"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small"
+                android:textColor="?android:attr/textColorSecondary" />
+
+            <CheckBox
+                android:id="@+id/check_mode_proxy"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:text="@string/split_tunnel_mode_proxy"
+                android:textAppearance="@style/TextAppearance.AppCompat.Subhead" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="32dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="8dp"
+                android:text="@string/split_tunnel_hint_proxy"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small"
+                android:textColor="?android:attr/textColorSecondary" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:visibility="gone">
 
                 <LinearLayout
                     android:id="@+id/container_per_app_proxy"
@@ -42,7 +81,6 @@
                         android:text="@string/per_app_proxy_settings_enable"
                         android:textAppearance="@style/TextAppearance.AppCompat.Small"
                         app:theme="@style/BrandedSwitch" />
-
                 </LinearLayout>
 
                 <LinearLayout
@@ -78,13 +116,9 @@
                             android:layout_height="@dimen/image_size_dp24"
                             android:importantForAccessibility="no"
                             app:srcCompat="@drawable/ic_about_24dp" />
-
                     </LinearLayout>
-
                 </LinearLayout>
             </LinearLayout>
-
-
         </LinearLayout>
     </LinearLayout>
 
@@ -94,5 +128,4 @@
         android:layout_height="match_parent"
         android:scrollbars="vertical"
         app:layoutManager="androidx.recyclerview.widget.GridLayoutManager" />
-
 </LinearLayout>

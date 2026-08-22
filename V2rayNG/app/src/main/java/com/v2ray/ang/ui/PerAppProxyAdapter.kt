@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import com.v2ray.ang.databinding.ItemRecyclerBypassListBinding
 import com.v2ray.ang.dto.AppInfo
+import com.v2ray.ang.util.AppIconCache
 import com.v2ray.ang.viewmodel.PerAppProxyViewModel
 
 class PerAppProxyAdapter(
@@ -55,7 +56,9 @@ class PerAppProxyAdapter(
         fun bind(appInfo: AppInfo) {
             this.appInfo = appInfo
 
-            itemBypassBinding.icon.setImageDrawable(appInfo.appIcon)
+            itemBypassBinding.icon.setImageDrawable(
+                appInfo.appIcon ?: AppIconCache.load(itemView.context, appInfo.packageName)
+            )
             itemBypassBinding.name.text = if (appInfo.isSystemApp) {
                 String.format("** %s", appInfo.appName)
             } else {

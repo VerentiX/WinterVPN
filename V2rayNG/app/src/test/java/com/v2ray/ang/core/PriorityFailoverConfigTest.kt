@@ -2,7 +2,6 @@ package com.v2ray.ang.core
 
 import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -68,12 +67,15 @@ class PriorityFailoverConfigTest {
             root.getAsJsonArray("selector").map { it.asString },
         )
         assertEquals("random", root.getAsJsonObject("strategy").get("type").asString)
-        assertFalse(root.has("fallbackTag"))
+        assertTrue(root.getAsJsonObject("strategy").get("settings") == null)
+        assertEquals("chain-s0001", root.get("fallbackTag").asString)
         val second = runtime.getAsJsonObject("routing").getAsJsonArray("balancers")[1].asJsonObject
         assertEquals("random", second.getAsJsonObject("strategy").get("type").asString)
-        assertFalse(second.has("fallbackTag"))
-        assertFalse(runtime.has("burstObservatory"))
-        assertTrue(source.has("burstObservatory"))
+        assertEquals("route-p0000-a", second.get("fallbackTag").asString)
+        val burst = runtime.getAsJsonObject("burstObservatory")
+        assertEquals(0, burst.getAsJsonArray("subjectSelector").size())
+        assertEquals("24h", burst.getAsJsonObject("pingConfig").get("interval").asString)
+        assertTrue(!runtime.has("observatory"))
         val probeInbound = runtime.getAsJsonArray("inbounds")[0].asJsonObject
         assertEquals("priority-probe-in-0", probeInbound.get("tag").asString)
         assertEquals(21001, probeInbound.get("port").asInt)

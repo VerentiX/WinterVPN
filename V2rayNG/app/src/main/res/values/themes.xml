@@ -78,4 +78,24 @@
         <item name="colorPrimary">@color/color_fab_active</item>
     </style>
 
+    <style name="PaymentBottomSheet" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">#1A1208</item>
+        <item name="bottomSheetStyle">@style/PaymentBottomSheetStyle</item>
+    </style>
+
+    <style name="PaymentBottomSheetStyle" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="backgroundTint">@android:color/transparent</item>
+        <item name="shapeAppearanceOverlay">@style/PaymentSheetShape</item>
+    </style>
+
+    <style name="PaymentSheetShape" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSizeTopLeft">28dp</item>
+        <item name="cornerSizeTopRight">28dp</item>
+        <item name="cornerSizeBottomLeft">0dp</item>
+        <item name="cornerSizeBottomRight">0dp</item>
+    </style>
+
 </resources>

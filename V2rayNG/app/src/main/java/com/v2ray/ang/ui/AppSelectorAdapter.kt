@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import com.v2ray.ang.databinding.ItemRecyclerBypassListBinding
 import com.v2ray.ang.dto.AppInfo
+import com.v2ray.ang.util.AppIconCache
 
 class AppSelectorAdapter(
     private val selectedPackages: MutableSet<String>
@@ -39,7 +40,9 @@ class AppSelectorAdapter(
 
         fun bind(item: AppInfo) {
             appInfo = item
-            binding.icon.setImageDrawable(item.appIcon)
+            binding.icon.setImageDrawable(
+                item.appIcon ?: AppIconCache.load(itemView.context, item.packageName)
+            )
             binding.name.text = if (item.isSystemApp) {
                 String.format("** %s", item.appName)
             } else {

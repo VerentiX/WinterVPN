@@ -58,7 +58,7 @@ object FailureLogRecorder {
 
     fun isEnabled(): Boolean {
         enabledCache?.let { return it }
-        val value = MmkvManager.decodeSettingsBool(AppConfig.PREF_FAILURE_LOG_ENABLED, false)
+        val value = DebugDiagnostics.isFailureLogEnabled()
         enabledCache = value
         return value
     }

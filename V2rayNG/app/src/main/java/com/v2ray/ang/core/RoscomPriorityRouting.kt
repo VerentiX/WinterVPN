@@ -41,6 +41,19 @@ internal object RoscomPriorityRouting {
         "204.15.20.0/22",
     )
 
+    /**
+     * HTVPlayer / Video.js bootstrap hosts that also appear in category-ads.
+     * Must be proxied before the ads block rule or the player waits ~10s and fails.
+     */
+    internal val VIDEO_BOOTSTRAP_DOMAINS = listOf(
+        "domain:imasdk.googleapis.com",
+        "domain:googleads.g.doubleclick.net",
+        "domain:googlesyndication.com",
+        "domain:googleadservices.com",
+        "domain:cdn.jsdelivr.net",
+        "domain:jsdelivr.net",
+    )
+
     data class Profile(
         val name: String,
         val routeOrder: List<String>,
@@ -67,9 +80,6 @@ internal object RoscomPriorityRouting {
         remoteDns = "https://8.8.8.8/dns-query",
         domesticDns = "https://77.88.8.8/dns-query",
         directSites = listOf(
-            // GMS push (mtalk / alt*-mtalk): keep off VPN to avoid radio/CPU heat.
-            "keyword:mtalk.google.com",
-            "domain:mtalk.google.com",
             "geosite:private",
             "geosite:category-ru",
             "geosite:whitelist",
@@ -86,10 +96,10 @@ internal object RoscomPriorityRouting {
         directIp = listOf(
             "geoip:private",
             "geoip:direct",
+            "geoip:ru",
         ),
         proxySites = listOf(
-            // Narrow Play hosts only — geosite:google-play also matches mtalk and
-            // caused auto-proxy-in -> proxy loops when sniffed.
+            // Narrow Play hosts only — full geosite:google-play is too broad.
             "domain:play.google.com",
             "domain:play.googleapis.com",
             "domain:googleapis.cn",
@@ -118,14 +128,13 @@ internal object RoscomPriorityRouting {
         remoteDns = "https://8.8.8.8/dns-query",
         domesticDns = "https://77.88.8.8/dns-query",
         directSites = listOf(
-            "keyword:mtalk.google.com",
-            "domain:mtalk.google.com",
             "geosite:private",
             "geosite:whitelist",
         ),
         directIp = listOf(
             "geoip:private",
             "geoip:whitelist",
+            "geoip:ru",
         ),
         proxySites = listOf(
             "domain:sberbank.ru",
@@ -137,8 +146,13 @@ internal object RoscomPriorityRouting {
             "domain:tinkoff.ru",
             "domain:tinkoff.com",
             "domain:tcsbank.ru",
+            // Explicit: Telegram must stay on proxy in whitelist mode (DCs are
+            // not geoip:ru; still pin geosite so DNS/SNI never fall through oddly).
+            "geosite:telegram",
         ),
-        proxyIp = emptyList(),
+        proxyIp = listOf(
+            "geoip:telegram",
+        ),
         blockSites = listOf(
             "geosite:category-ads",
             "geosite:category-ads-all",
@@ -165,6 +179,14 @@ internal object RoscomPriorityRouting {
         activeIndex: Int,
     ): Mode = modeForActiveRoute(plan, activeIndex)
 
+    /** Extra SOCKS inbound that carries WHITELIST rules (p5+). p0–p4 stay on mixed/socks. */
+    const val INBOUND_WHITELIST = "socks-whitelist"
+    const val INBOUND_WHITELIST_PROXY = "auto-proxy-whitelist-in"
+    const val OUTBOUND_WHITELIST_PROXY = "proxy-whitelist"
+    const val BALANCER_WHITELIST = "tier-whitelist"
+    const val WHITELIST_SOCKS_PORT_OFFSET = 10
+    private val CLIENT_INBOUND_PROTOCOLS = setOf("socks", "mixed")
+
     fun profileFor(mode: Mode): Profile {
         val remote = WinterRoutingProfiles.load()
         return when (mode) {
@@ -173,17 +195,33 @@ internal object RoscomPriorityRouting {
         }
     }
 
+    fun whitelistSocksPort(basePort: Int): Int {
+        val candidate = basePort + WHITELIST_SOCKS_PORT_OFFSET
+        return if (candidate <= 65535) {
+            candidate
+        } else {
+            (basePort - WHITELIST_SOCKS_PORT_OFFSET).coerceAtLeast(1)
+        }
+    }
+
+    fun tunSocksPort(mode: Mode?, basePort: Int): Int {
+        return if (mode == Mode.WHITELIST) whitelistSocksPort(basePort) else basePort
+    }
+
     /**
-     * Rewrite user routing + DNS hosts for the active priority route.
-     * Returns false when the config lacks proxy/direct/block outbounds.
+     * Both FULL and WHITELIST live in one Xray process as two inbound-scoped
+     * rule tables **and** two proxy chains. p0–p4 traffic stays on `proxy` →
+     * auto-proxy-in → P0. p5+ traffic uses [OUTBOUND_WHITELIST_PROXY] →
+     * [BALANCER_WHITELIST] (p5+ only). Sharing one balancer was why Telegram
+     * still dialed dead P0 after hev moved to the whitelist SOCKS port.
      */
     fun apply(
         config: JsonObject,
         plan: PriorityFailoverConfig.Plan,
         activeIndex: Int,
     ): Boolean {
-        val mode = profileModeForActiveRoute(plan, activeIndex)
-        val profile = profileFor(mode)
+        val full = profileFor(Mode.FULL)
+        val white = profileFor(Mode.WHITELIST)
         val tags = resolveOutboundTags(config.arrayOrNull("outbounds")) ?: run {
             runCatching {
                 LogUtil.w(
@@ -194,6 +232,9 @@ internal object RoscomPriorityRouting {
             return false
         }
         val routing = config.objectOrNull("routing") ?: return false
+        val (fullInbounds, whiteInbound) = ensureWhitelistInbound(config)
+        val whitelistProxy = attachWhitelistProxyChain(config, plan, activeIndex) ?: tags.proxy
+        val whiteTags = tags.copy(proxy = whitelistProxy)
         val originalRules = routing.arrayOrNull("rules") ?: JsonArray()
         val preserved = JsonArray()
         originalRules.forEach { element ->
@@ -203,8 +244,9 @@ internal object RoscomPriorityRouting {
             }
         }
 
-        val userRules = buildUserRules(profile, tags)
-        // inboundTag bridges first, then UDP/443 (Meta QUIC bypass, then YouTube block).
+        val fullRules = buildUserRules(full, tags, fullInbounds)
+        val whiteRules = buildUserRules(white, whiteTags, listOf(whiteInbound))
+        // inboundTag bridges first, then UDP/443 (Meta QUIC bypass, global reject, preserved).
         // Otherwise a proxy-loopback QUIC exception rematches on auto-proxy-in.
         val inboundStructural = JsonArray()
         val quicStructural = JsonArray()
@@ -220,100 +262,171 @@ internal object RoscomPriorityRouting {
         }
         val merged = JsonArray()
         inboundStructural.forEach { merged.add(it) }
-        merged.add(metaQuicProxyRule(tags))
-        quicStructural.forEach { merged.add(it) }
-        userRules.forEach { merged.add(it) }
+        if (whitelistProxy == OUTBOUND_WHITELIST_PROXY) {
+            merged.add(whitelistProxyInboundRule())
+        }
+        merged.add(metaQuicProxyRule(tags.proxy, fullInbounds))
+        if (whitelistProxy == OUTBOUND_WHITELIST_PROXY) {
+            merged.add(metaQuicProxyRule(whitelistProxy, listOf(whiteInbound)))
+        }
+        merged.add(quicRejectRule(tags.block))
+        quicStructural.forEach { element ->
+            val rule = element.takeIf { it.isJsonObject }?.asJsonObject
+            if (rule != null && isGlobalQuicRejectRule(rule, tags.block)) {
+                return@forEach
+            }
+            merged.add(element)
+        }
+        merged.add(videoBootstrapProxyRule(tags.proxy, fullInbounds))
+        if (whitelistProxy == OUTBOUND_WHITELIST_PROXY) {
+            merged.add(videoBootstrapProxyRule(whitelistProxy, listOf(whiteInbound)))
+        }
+        fullRules.forEach { merged.add(it) }
+        whiteRules.forEach { merged.add(it) }
+        if (whitelistProxy == OUTBOUND_WHITELIST_PROXY) {
+            merged.add(whitelistCatchAll(whiteInbound, whitelistProxy))
+        }
         restPreserved.forEach { merged.add(it) }
         routing.add("rules", merged)
-        routing.addProperty("domainStrategy", profile.domainStrategy)
-        mergeDns(config, profile)
+        routing.addProperty("domainStrategy", full.domainStrategy)
+        mergeDns(config, full, white)
+        pinBalancersToActiveRoute(config, plan, activeIndex)
 
         runCatching {
             LogUtil.transport(
-                "Roscom priority routing=${profile.name} " +
-                    "(mode=$mode, route=${plan.routes.getOrNull(activeIndex)})",
+                "Roscom dual routing tables FULL+WHITELIST " +
+                    "(p0–p4=${fullInbounds.joinToString()}→${tags.proxy}; " +
+                    "p5+=$whiteInbound→$whitelistProxy; " +
+                    "route=${plan.routes.getOrNull(activeIndex)}; hev port follows p-tier)"
             )
         }
         return true
     }
 
-    private fun buildUserRules(profile: Profile, tags: OutboundTags): List<JsonObject> {
-        val rules = mutableListOf<JsonObject>()
-        // GCM/MCS must be direct BEFORE any ProxySites (google-play includes mtalk).
-        rules += JsonObject().apply {
-            addProperty("type", "field")
-            addProperty("port", "5228")
-            addProperty("network", "tcp")
-            addProperty("outboundTag", tags.direct)
+    /**
+     * Clone the primary SOCKS/mixed inbound as [INBOUND_WHITELIST] on port+10.
+     * Hev is moved to that port when the active route is p5+; Xray stays up.
+     */
+    internal fun ensureWhitelistInbound(config: JsonObject): Pair<List<String>, String> {
+        val inbounds = config.arrayOrNull("inbounds")
+            ?: JsonArray().also { config.add("inbounds", it) }
+        val primary = inbounds.mapNotNull { element ->
+            element.takeIf { it.isJsonObject }?.asJsonObject
+        }.firstOrNull { inbound ->
+            val tag = inbound.stringOrNull("tag").orEmpty()
+            val protocol = inbound.stringOrNull("protocol").orEmpty()
+            tag != INBOUND_WHITELIST &&
+                !tag.startsWith("priority-probe") &&
+                protocol in CLIENT_INBOUND_PROTOCOLS
         }
-        addDomainRule(
-            rules,
-            listOf("keyword:mtalk.google.com", "domain:mtalk.google.com"),
-            tags.direct,
-        )
+        val fullTags = inbounds.mapNotNull { element ->
+            val inbound = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+            val tag = inbound.stringOrNull("tag") ?: return@mapNotNull null
+            val protocol = inbound.stringOrNull("protocol").orEmpty()
+            if (tag == INBOUND_WHITELIST || tag.startsWith("priority-probe")) return@mapNotNull null
+            if (protocol in CLIENT_INBOUND_PROTOCOLS || protocol == "http") tag else null
+        }.ifEmpty { listOf("socks", "mixed", "http") }
+
+        if (primary != null && inbounds.none { element ->
+                element.takeIf { it.isJsonObject }?.asJsonObject?.stringOrNull("tag") == INBOUND_WHITELIST
+            }
+        ) {
+            val clone = primary.deepCopy()
+            val basePort = primary.get("port")
+                ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+                ?.asInt
+                ?: AppConfig.PORT_SOCKS.toInt()
+            clone.addProperty("tag", INBOUND_WHITELIST)
+            clone.addProperty("listen", AppConfig.LOOPBACK)
+            clone.addProperty("port", whitelistSocksPort(basePort))
+            inbounds.add(clone)
+        }
+        return fullTags to INBOUND_WHITELIST
+    }
+
+    private fun buildUserRules(
+        profile: Profile,
+        tags: OutboundTags,
+        inboundTags: List<String>,
+    ): List<JsonObject> {
+        val rules = mutableListOf<JsonObject>()
         profile.routeOrder.forEach { step ->
             when (step) {
                 "block" -> {
-                    addDomainRule(rules, profile.blockSites, tags.block)
-                    addIpRule(rules, profile.blockIp, tags.block)
+                    addDomainRule(rules, profile.blockSites, tags.block, inboundTags)
+                    addIpRule(rules, profile.blockIp, tags.block, inboundTags)
                 }
                 "proxy" -> {
-                    // Keep GMS out of google-play / other proxy geosites.
-                    val proxySites = profile.proxySites.filterNot {
-                        it.contains("mtalk", ignoreCase = true)
-                    }
-                    addDomainRule(rules, proxySites, tags.proxy)
-                    addIpRule(rules, profile.proxyIp, tags.proxy)
+                    addDomainRule(rules, profile.proxySites, tags.proxy, inboundTags)
+                    addIpRule(rules, profile.proxyIp, tags.proxy, inboundTags)
                 }
                 "direct" -> {
-                    addDomainRule(rules, profile.directSites, tags.direct)
-                    addIpRule(rules, profile.directIp, tags.direct)
+                    // Do not force GMS/mtalk off VPN; leave routing to profile lists only.
+                    addDomainRule(
+                        rules,
+                        profile.directSites.filterNot { it.contains("mtalk", ignoreCase = true) },
+                        tags.direct,
+                        inboundTags,
+                    )
+                    addIpRule(rules, profile.directIp, tags.direct, inboundTags)
                 }
             }
         }
         return rules
     }
 
-    private fun addDomainRule(rules: MutableList<JsonObject>, domains: List<String>, outboundTag: String) {
+    private fun addDomainRule(
+        rules: MutableList<JsonObject>,
+        domains: List<String>,
+        outboundTag: String,
+        inboundTags: List<String>,
+    ) {
         if (domains.isEmpty()) return
         rules += JsonObject().apply {
             addProperty("type", "field")
+            add("inboundTag", JsonArray().apply { inboundTags.forEach { add(it) } })
             add("domain", JsonArray().apply { domains.forEach { add(it) } })
             addProperty("outboundTag", outboundTag)
         }
     }
 
-    private fun addIpRule(rules: MutableList<JsonObject>, ips: List<String>, outboundTag: String) {
+    private fun addIpRule(
+        rules: MutableList<JsonObject>,
+        ips: List<String>,
+        outboundTag: String,
+        inboundTags: List<String>,
+    ) {
         if (ips.isEmpty()) return
         rules += JsonObject().apply {
             addProperty("type", "field")
+            add("inboundTag", JsonArray().apply { inboundTags.forEach { add(it) } })
             add("ip", JsonArray().apply { ips.forEach { add(it) } })
             addProperty("outboundTag", outboundTag)
         }
     }
 
-    private fun mergeDns(config: JsonObject, profile: Profile) {
+    private fun mergeDns(config: JsonObject, vararg profiles: Profile) {
         val dns = config.objectOrNull("dns") ?: JsonObject().also { config.add("dns", it) }
         val hosts = dns.objectOrNull("hosts") ?: JsonObject().also { dns.add("hosts", it) }
-        profile.dnsHosts.forEach { (domain, ip) ->
-            hosts.addProperty(domain, ip)
+        profiles.forEach { profile ->
+            profile.dnsHosts.forEach { (domain, ip) ->
+                hosts.addProperty(domain, ip)
+            }
         }
-        // Keep existing server endpoints when present; only ensure DoH URLs from the profile
-        // are discoverable for configs that already follow the Happ remote/domestic layout.
         val servers = dns.arrayOrNull("servers") ?: return
+        val remoteByAddress = profiles.associate { it.remoteDns to it }
+        val domesticByAddress = profiles.associate { it.domesticDns to it }
+        val proxySites = profiles.flatMap { it.proxySites }.distinct()
+        val directSites = profiles.flatMap { it.directSites }.distinct()
         servers.forEach { element ->
             val server = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
             val address = server.stringOrNull("address") ?: return@forEach
-            when (address) {
-                profile.remoteDns -> {
-                    if (profile.proxySites.isNotEmpty()) {
-                        server.add("domains", JsonArray().apply { profile.proxySites.forEach { add(it) } })
-                    }
+            when {
+                address in remoteByAddress && proxySites.isNotEmpty() -> {
+                    server.add("domains", JsonArray().apply { proxySites.forEach { add(it) } })
                 }
-                profile.domesticDns -> {
-                    if (profile.directSites.isNotEmpty()) {
-                        server.add("domains", JsonArray().apply { profile.directSites.forEach { add(it) } })
-                    }
+                address in domesticByAddress && directSites.isNotEmpty() -> {
+                    server.add("domains", JsonArray().apply { directSites.forEach { add(it) } })
                 }
             }
         }
@@ -374,12 +487,151 @@ internal object RoscomPriorityRouting {
         return network.split(",").any { it.trim().equals("udp", ignoreCase = true) }
     }
 
-    private fun metaQuicProxyRule(tags: OutboundTags): JsonObject = JsonObject().apply {
+    /**
+     * Loopback + balancer for p5+. Pin the selector to the Smart Priority
+     * active route so each TCP does not hop a random p5/p6/p15 server.
+     */
+    internal fun attachWhitelistProxyChain(
+        config: JsonObject,
+        plan: PriorityFailoverConfig.Plan,
+        activeIndex: Int,
+    ): String? {
+        val whitelistRoutes = plan.routes.filter { modeForRouteTag(it) == Mode.WHITELIST }
+        if (whitelistRoutes.isEmpty()) return null
+        val outbounds = config.arrayOrNull("outbounds") ?: return null
+        if (outbounds.none { element ->
+                element.takeIf { it.isJsonObject }?.asJsonObject?.stringOrNull("tag") ==
+                    OUTBOUND_WHITELIST_PROXY
+            }
+        ) {
+            outbounds.add(
+                JsonObject().apply {
+                    addProperty("protocol", "loopback")
+                    addProperty("tag", OUTBOUND_WHITELIST_PROXY)
+                    add(
+                        "settings",
+                        JsonObject().apply { addProperty("inboundTag", INBOUND_WHITELIST_PROXY) },
+                    )
+                },
+            )
+        }
+        val routing = config.objectOrNull("routing") ?: return null
+        val balancers = routing.arrayOrNull("balancers")
+            ?: JsonArray().also { routing.add("balancers", it) }
+        val activeTag = plan.routes.getOrNull(activeIndex)
+        val pinned = activeTag?.takeIf { modeForRouteTag(it) == Mode.WHITELIST }
+            ?: whitelistRoutes.first()
+        val selector = JsonArray().apply { add(pinned) }
+        val existing = balancers.mapNotNull { element ->
+            element.takeIf { it.isJsonObject }?.asJsonObject
+        }.firstOrNull { it.stringOrNull("tag") == BALANCER_WHITELIST }
+        if (existing == null) {
+            val strategyType = balancers.mapNotNull { element ->
+                element.takeIf { it.isJsonObject }?.asJsonObject
+                    ?.objectOrNull("strategy")
+                    ?.stringOrNull("type")
+            }.firstOrNull() ?: "leastLoad"
+            balancers.add(
+                JsonObject().apply {
+                    addProperty("tag", BALANCER_WHITELIST)
+                    add("selector", selector)
+                    add("strategy", JsonObject().apply { addProperty("type", strategyType) })
+                },
+            )
+        } else {
+            existing.add("selector", selector)
+        }
+        runCatching {
+            LogUtil.transport(
+                "Whitelist proxy chain $OUTBOUND_WHITELIST_PROXY → $BALANCER_WHITELIST " +
+                    "pinned=$pinned (not random among ${whitelistRoutes.size} p5+ routes)"
+            )
+        }
+        return OUTBOUND_WHITELIST_PROXY
+    }
+
+    /**
+     * Smart Priority already chose one live outbound. A `random` balancer with
+     * every peer in the tier made Telegram/DNS hop servers every new TCP.
+     */
+    internal fun pinBalancersToActiveRoute(
+        config: JsonObject,
+        plan: PriorityFailoverConfig.Plan,
+        activeIndex: Int,
+    ) {
+        val activeTag = plan.routes.getOrNull(activeIndex) ?: return
+        val balancers = config.objectOrNull("routing")?.arrayOrNull("balancers") ?: return
+        balancers.forEach { element ->
+            val balancer = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val selector = balancer.arrayOrNull("selector") ?: return@forEach
+            val tags = selector.mapNotNull {
+                it.takeIf { item -> item.isJsonPrimitive && item.asJsonPrimitive.isString }?.asString
+            }
+            if (activeTag !in tags) return@forEach
+            if (tags.size == 1 && tags[0] == activeTag) return@forEach
+            balancer.add("selector", JsonArray().apply { add(activeTag) })
+            runCatching {
+                LogUtil.transport(
+                    "Pinned balancer ${balancer.stringOrNull("tag")} → $activeTag " +
+                        "(was ${tags.joinToString()})"
+                )
+            }
+        }
+    }
+
+    private fun whitelistProxyInboundRule(): JsonObject = JsonObject().apply {
         addProperty("type", "field")
-        addProperty("network", "udp")
-        addProperty("port", "443")
-        add("ip", JsonArray().apply { FACEBOOK_PROXY_IP.forEach { add(it) } })
-        addProperty("outboundTag", tags.proxy)
+        add("inboundTag", JsonArray().apply { add(INBOUND_WHITELIST_PROXY) })
+        addProperty("network", "tcp,udp")
+        addProperty("balancerTag", BALANCER_WHITELIST)
+    }
+
+    private fun whitelistCatchAll(whiteInbound: String, proxyTag: String): JsonObject =
+        JsonObject().apply {
+            addProperty("type", "field")
+            add("inboundTag", JsonArray().apply { add(whiteInbound) })
+            addProperty("network", "tcp,udp")
+            addProperty("outboundTag", proxyTag)
+        }
+
+    private fun metaQuicProxyRule(proxyTag: String, inboundTags: List<String>): JsonObject =
+        JsonObject().apply {
+            addProperty("type", "field")
+            add("inboundTag", JsonArray().apply { inboundTags.forEach { add(it) } })
+            addProperty("network", "udp")
+            addProperty("port", "443")
+            add("ip", JsonArray().apply { FACEBOOK_PROXY_IP.forEach { add(it) } })
+            addProperty("outboundTag", proxyTag)
+        }
+
+    /**
+     * HTTP/3 over VLESS+Reality+TCP stalls; reject QUIC fast so Chrome falls back to TCP.
+     * [metaQuicProxyRule] above keeps Instagram/Meta QUIC on the proxy path.
+     */
+    private fun quicRejectRule(blockTag: String): JsonObject =
+        JsonObject().apply {
+            addProperty("type", "field")
+            addProperty("network", "udp")
+            addProperty("port", "443")
+            addProperty("outboundTag", blockTag)
+        }
+
+    private fun videoBootstrapProxyRule(proxyTag: String, inboundTags: List<String>): JsonObject =
+        JsonObject().apply {
+            addProperty("type", "field")
+            add("inboundTag", JsonArray().apply { inboundTags.forEach { add(it) } })
+            add("domain", JsonArray().apply { VIDEO_BOOTSTRAP_DOMAINS.forEach { add(it) } })
+            addProperty("outboundTag", proxyTag)
+        }
+
+    private fun isGlobalQuicRejectRule(rule: JsonObject, blockTag: String): Boolean {
+        if (!isUdp443Rule(rule)) return false
+        if (rule.has("domain") || rule.has("ip") || rule.has("inboundTag") ||
+            rule.has("balancerTag") || rule.has("process")
+        ) {
+            return false
+        }
+        return rule.stringOrNull("outboundTag") == blockTag
     }
 
     private fun isPortOnlyRule(rule: JsonObject): Boolean {

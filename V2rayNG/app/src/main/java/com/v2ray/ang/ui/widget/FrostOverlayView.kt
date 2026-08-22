@@ -562,27 +562,6 @@ class FrostOverlayView @JvmOverloads constructor(
 
     private fun drawFrostScene(canvas: Canvas, t: Float) {
         val spread = easeOutQuart(t)
-        val fullRadius = hypot(width.toDouble(), height.toDouble()).toFloat() * 1.08f
-        val radius = fullRadius * spread
-        ensureWashShaders(radius)
-
-        // Soft cool haze
-        washPaint.shader = null
-        washPaint.color = 0xFF141C2E.toInt()
-        washPaint.alpha = (spread * 112).toInt().coerceIn(0, 112)
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), washPaint)
-        washPaint.alpha = 255
-
-        washPaint.shader = bloomShader
-        canvas.drawCircle(originX, originY, radius, washPaint)
-
-        washPaint.shader = coreShader
-        canvas.drawCircle(originX, originY, radius * 0.38f, washPaint)
-
-        washPaint.shader = vignetteShader
-        washPaint.alpha = (spread * 195).toInt()
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), washPaint)
-        washPaint.alpha = 255
 
         canvas.save()
         canvas.clipRect(crackZone)
@@ -602,7 +581,8 @@ class FrostOverlayView @JvmOverloads constructor(
         }
 
         if (t < 0.995f) {
-            val rLimit = radius * 0.9f
+            val fullRadius = hypot(width.toDouble(), height.toDouble()).toFloat() * 1.08f
+            val rLimit = fullRadius * spread * 0.9f
             val rLimitSq = rLimit * rLimit
             for (spark in sparkles) {
                 if (spark.y > crackBottomY) continue

@@ -17,6 +17,7 @@ import com.v2ray.ang.extension.isNotNullEmpty
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.util.HttpUtil
+import com.v2ray.ang.util.DebugDiagnostics
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.PackageUidResolver
@@ -151,9 +152,12 @@ object CoreConfigManager {
             val templateConfig = initV2rayConfig(configContext)
             templateConfig.inbounds.firstOrNull { it.tag == "tun" }?.let { inboundTun ->
                 inboundTun.settings?.mtu = SettingsManager.getEffectiveVpnMtu()
+                inboundTun.sniffing?.routeOnly = true
                 inboundsJson.add(JsonUtil.parseString(JsonUtil.toJson(inboundTun)))
             }
         }
+        // Tun is appended after the first pass; sniffing must keep the original IP dest.
+        keepCustomInboundDestination(json)
 
         return JsonUtil.toJsonPretty(json)?.let { ConfigResult(true, configContext.guid, it) } ?: result
     }
@@ -165,7 +169,7 @@ object CoreConfigManager {
      * avoids accidental destination replacement while preserving domain-based
      * routing decisions. FakeDNS remains an exception handled by Xray itself.
      */
-    private fun keepCustomInboundDestination(json: JsonObject) {
+    internal fun keepCustomInboundDestination(json: JsonObject) {
         val inbounds = json.getAsJsonArray("inbounds") ?: return
         inbounds.forEach { element ->
             val inbound = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
@@ -287,7 +291,7 @@ object CoreConfigManager {
         val primaryResolvedOutbound = configContext.resolvedOutbounds.first()
 
         val v2rayConfig = initV2rayConfig(configContext)
-        v2rayConfig.log.loglevel = MmkvManager.decodeSettingsString(AppConfig.PREF_LOGLEVEL) ?: "warning"
+        v2rayConfig.log.loglevel = DebugDiagnostics.effectiveCoreLogLevel()
         v2rayConfig.remarks = primaryResolvedOutbound.profile.remarks
 
         configureInbounds(v2rayConfig)
@@ -395,8 +399,7 @@ object CoreConfigManager {
     }
 
     private fun isConnectionDiagnosticsEnabled(): Boolean =
-        SettingsManager.isVpnMode() &&
-            MmkvManager.decodeSettingsBool(AppConfig.PREF_CONNECTION_DIAGNOSTICS_ENABLED) == true
+        SettingsManager.isVpnMode() && DebugDiagnostics.isConnectionDiagnosticsEnabled()
 
     private const val CONNECTION_DIAGNOSTICS_PROCESS = "com.zimavpn.__connection_diagnostics_never_match__"
 
@@ -595,7 +598,7 @@ object CoreConfigManager {
      * Trim runtime sections that are not needed for latency testing.
      */
     private fun postProcessForSpeedtest(v2rayConfig: V2rayConfig) {
-        v2rayConfig.log.loglevel = MmkvManager.decodeSettingsString(AppConfig.PREF_LOGLEVEL) ?: "warning"
+        v2rayConfig.log.loglevel = DebugDiagnostics.effectiveCoreLogLevel()
         v2rayConfig.inbounds.clear()
         v2rayConfig.routing.rules.clear()
         v2rayConfig.dns = null
@@ -720,7 +723,7 @@ object CoreConfigManager {
         if (needTun()) {
             val inboundTun = v2rayConfig.inbounds.firstOrNull { e -> e.tag == "tun" }
             inboundTun?.settings?.mtu = SettingsManager.getEffectiveVpnMtu()
-            inboundTun?.sniffing = inbound1.sniffing
+            inboundTun?.sniffing = inbound1.sniffing?.also { it.routeOnly = true }
         }
     }
 
